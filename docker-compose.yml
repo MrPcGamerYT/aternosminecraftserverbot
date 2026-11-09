@@ -1,0 +1,53 @@
+# docker compose for an always-on server (Oracle Cloud free VM, a cheap VPS,
+# a home PC, a Raspberry Pi, a phone running Termux + Docker — anything with a
+# real kernel that stays on).
+#
+#   docker compose up -d --build     # start
+#   docker compose logs -f           # watch the bot
+#   docker compose down              # stop
+#
+# The dashboard is on http://<host>:5000. One container, one process, no
+# second service and no BOT_BACKEND_URL — the same shape as every other
+# single-host deployment in this repo.
+services:
+  afk-bot:
+    build: .
+    image: minecraft-afk-bot:local
+    container_name: afk-bot
+    # restart: always is what makes this a real 24/7 host. A PaaS free tier
+    # spins a service down after idle minutes; a VM or a PC does not, and
+    # Docker puts the bot back after a crash, a reboot or an OOM kill.
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: production
+      PORT: "5000"
+      # 512 MB container? 384 MB of V8 heap leaves room for buffers.
+      NODE_OPTIONS: "--max-old-space-size=384"
+      # Optional, only for hosts that need a public URL to keep warm. On a
+      # real VM you can leave this unset: nothing spins down here.
+      # PUBLIC_URL: "https://afk.example.com"
+      # Optional exaroton integration. Put the token in a `.env` file next to
+      # this one (compose reads it automatically), never in settings.json.
+      EXAROTON_TOKEN: "${EXAROTON_TOKEN:-}"
+      EXAROTON_SERVER_ID: "${EXAROTON_SERVER_ID:-}"
+    # The bot keeps its single-instance lease in /tmp, so the lease dies with
+    # the container instead of lingering in a new one after a rebuild.
+    tmpfs:
+      - /tmp
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://127.0.0.1:5000/ping',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

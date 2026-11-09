@@ -2622,7 +2622,8 @@ function renderTutorialPage(state) {
   <section class="card">
     <h3>2 · Let it survive on a free host</h3>
     <ul>
-      <li>Bind to <code>0.0.0.0</code> and use <code>process.env.PORT</code> — already done.</li>
+      <li>Bind to <code>0.0.0.0</code> on the port the host gives you — already done
+          (<code>PORT</code>, or <code>SERVER_PORT</code> on panel hosts like Botkeep).</li>
       <li>Set <code>PUBLIC_URL</code> so the self-ping keeps the service warm
           (or rely on <code>RENDER_EXTERNAL_URL</code> / <code>KOYEB_PUBLIC_DOMAIN</code> /
           <code>FLY_APP_NAME</code> / <code>RAILWAY_PUBLIC_DOMAIN</code> auto-detection).</li>
@@ -3082,7 +3083,23 @@ function releaseLeaseOnExit() {
   }
 }
 
-function startHttpServer(port = Number(env.PORT) || 5000) {
+/**
+ * The port the dashboard should listen on.
+ *
+ * `PORT` is the convention on Render/Koyeb/Fly/Railway/Docker. Panel hosts
+ * (Botkeep, Pterodactyl, some game panels) hand the port over as `SERVER_PORT`
+ * instead and expect the process to bind exactly that one -- bind anything else
+ * and the panel shows the app as offline. Falls back to 5000 locally.
+ */
+function resolveHttpPort(source = env) {
+  const explicit = Number(source.PORT);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const panel = Number(source.SERVER_PORT);
+  if (Number.isFinite(panel) && panel > 0) return panel;
+  return 5000;
+}
+
+function startHttpServer(port = resolveHttpPort(env)) {
   const app = createApp();
   httpServer = app.listen(port, "0.0.0.0", () => {
     const actual = httpServer.address();
@@ -3451,6 +3468,7 @@ const exported = {
   claimLease,
   releaseLeaseOnExit,
   startHttpServer,
+  resolveHttpPort,
   provider,
   addLog,
   getLogs,

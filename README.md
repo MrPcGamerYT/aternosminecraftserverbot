@@ -11,7 +11,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 ```
 npm install
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 132 tests, no framework, no network
+npm run test:all   # 139 tests, no framework, no network
 ```
 
 ---
@@ -33,6 +33,7 @@ npm run test:all   # 132 tests, no framework, no network
 - [Configuration](#configuration)
 - [Environment variables](#environment-variables)
 - [Deploying](#deploying)
+- [Free 24/7 hosting](#free-247-hosting)
 - [Tests](#tests)
 - [Rules this bot follows](#rules-this-bot-follows)
 - [Troubleshooting](#troubleshooting)
@@ -120,6 +121,11 @@ Environment variables always win over `settings.json`.
 | `api/index.js` | Serverless entry point — exports the express handler Vercel invokes. Never starts a bot. |
 | `vercel.json` | Routes `/(.*)` → `api/index.js`, declares the function budget, publishes only `public/`, no-store on status routes. |
 | `public/index.html` | The only published static file: a self-contained status shell that queries `/status/light` and explains itself when no API is present. Keeps a static deployment from ever serving source. |
+| `docker-compose.yml` | One container, `restart: always`, healthcheck on `/ping` — for a VM, a VPS, a home PC or a Pi. |
+| `deploy/minecraft-afk-bot.service` | systemd unit for a native install: `Restart=always`, `SIGTERM` for a clean game quit, journald logs. |
+| `deploy/vm-install.sh` | Installs Node 20, copies the app to `/opt/minecraft-afk-bot`, enables the unit. |
+| `deploy/termux-install.sh` | The same on Android: Node LTS, `npm ci`, `termux-wake-lock`, `tmux` instructions. |
+| `deploy/free-hosts.md` | Which free hosts allow 24/7, what each one costs you in RAM, and why Render's free tier suspends this bot. |
 
 There is exactly **one** owner for each timer: `timers.reconnect`, one watchdog
 per connection attempt, one keep-alive interval, one lease renewal.
@@ -399,7 +405,7 @@ so a partial `settings.json` still boots.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `PORT` | `5000` | HTTP port (binds `0.0.0.0`). |
+| `PORT` | `5000` | HTTP port (binds `0.0.0.0`). Panel hosts that assign one, like Botkeep, pass it as `SERVER_PORT` and that is read automatically. |
 | `MC_SERVER_HOST` / `MC_SERVER_PORT` | settings | Server target (`host:port` also accepted). |
 | `MC_USERNAME` / `MC_PASSWORD` | settings | Account credentials. |
 | `PUBLIC_URL` | auto | Keep-alive target. |
@@ -454,9 +460,22 @@ nothing else at all.
   no restarts, switch `plan: free` to `plan: starter` ($7/mo, same 512 MB) —
   nothing else changes.
 
+  > **Read this before choosing Render free.** The self-ping above exists to stop
+  > the 15-minute spin-down, and that is exactly what Render treats as abusing an
+  > evaluation tier — three accounts have already been suspended for it in this
+  > project. Render suspends for keeping a free service permanently awake, and
+  > again for opening a second account to get a second free service. If your
+  > account is gone, do not recreate it: use a host where 24/7 is the product —
+  > see [Free 24/7 hosting](#free-247-hosting).
+
 * **Render paid / Koyeb / Fly / Railway** — the same single service; these never
   sleep, so the self-ping becomes optional insurance rather than the thing that
   keeps it alive.
+* **A free host that allows 24/7** — a bot panel (512 MB, no card), Oracle Cloud
+  Always Free, an old Android phone on Termux, or a ₹99 VPS. Step-by-step for
+  each is in [`deploy/free-hosts.md`](deploy/free-hosts.md); the repo ships
+  `docker-compose.yml`, `deploy/minecraft-afk-bot.service`,
+  `deploy/vm-install.sh` and `deploy/termux-install.sh` to match.
 * **Docker** — `Dockerfile` (Node 20 Alpine, `tini` for clean signals, non-root user,
   `HEALTHCHECK` on `/ping`). Build ignores `.env`, `tests`, docs via `.dockerignore`.
 * **Procfile / nixpacks** — `Procfile` (`web: node index.js`) and `nixpacks.toml`
@@ -500,11 +519,75 @@ Keep it to **one** bot instance per username.
 
 ---
 
+## Free 24/7 hosting
+
+Every option below runs this bot the way it is meant to run — one process, no
+second host, no trick to stay awake. Full steps: [`deploy/free-hosts.md`](deploy/free-hosts.md).
+
+| Option | Signup | Card | Why it does not get suspended | RAM |
+| --- | --- | --- | --- | --- |
+| Bot panel — Botkeep, HeavenCloud, SillyDev, Waifly, VisiHost | email, 2 min | no | 24/7 is the product; being online is expected | 256–512 MB |
+| Oracle Cloud Always Free | email + card | yes, ₹0 | a real always-free VM; nothing spins down | up to 24 GB |
+| Old Android + Termux | none | no | it is your own device; nothing to suspend | phone RAM |
+| ₹99/mo VPS (RackNerd, Hetzner, VisiHost) | email + UPI | yes | paid host, no free-tier rules | 512 MB+ |
+
+What the bot actually uses, measured locally: **~70 MB idle, ~100–130 MB after
+`minecraft-data` loads, one outbound TCP connection**. 512 MB is comfortable,
+256 MB is tight — set `NODE_OPTIONS=--max-old-space-size=192` there.
+
+### Botkeep (easiest, 512 MB, no card, no renewals)
+
+Sign up at `botkeep.cloud/register`, create a **Node.js 22** server, upload a ZIP
+whose root contains `package.json` (GitHub "Download ZIP" adds an outer folder —
+re-zip the contents), start command `npm start`, and one environment variable:
+
+```
+NODE_OPTIONS=--max-old-space-size=384
+```
+
+Leave `PORT` unset: Botkeep passes the assigned port as `SERVER_PORT` and the app
+binds it. Full walkthrough with the exact console output:
+[`deploy/free-hosts.md`](deploy/free-hosts.md#1-botkeep--step-by-step).
+
+Other Pterodactyl-style panels (HeavenCloud, SillyDev, Waifly) have no build
+step — `unzip`, `npm ci --omit=dev`, startup command `node index.js`. Those
+panels give no public URL, so the console is your dashboard; the bot is identical.
+
+### VM, VPS, home PC, Raspberry Pi
+
+```
+git clone <this repo> && cd <repo>
+sudo docker compose up -d --build        # or: sudo bash deploy/vm-install.sh
+```
+
+`docker-compose.yml` and `deploy/minecraft-afk-bot.service` both use
+`restart: always`, so a crash, a reboot or an OOM kill brings the bot back —
+the thing a PaaS free tier keeps undoing.
+
+### Old Android phone
+
+```
+pkg install git
+git clone <this repo> ~/afk-bot
+bash ~/afk-bot/deploy/termux-install.sh
+```
+
+No account, no card, no limits — the phone just has to stay on and charging.
+
+### Why Render free suspended accounts
+
+The self-ping defeats the 15-minute spin-down, and a second account to get a
+second free service is ban evasion. Both are free-tier abuse on any sleep-based
+PaaS. Do not re-create those accounts; move to a host above, where leaving a bot
+online is normal.
+
+---
+
 ## Tests
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 9 suites (132 tests)
+npm run test:all          # syntax + all 9 suites (139 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -516,7 +599,7 @@ npm run test:all          # syntax + all 9 suites (132 tests)
 | `test-provider.js` | 21 | Status map 0–10, token exclusivity, base URL scheme, start/stop/restart paths, error surfacing, token scrubbing, endpoint wiring. |
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
-| `test-single-host.js` | 12 | The one-host promise, enforced: `render.yaml` has exactly **one** service, stays on `plan: free`, runs one instance of `node index.js`, keeps `BOT_BACKEND_URL` empty, caps the V8 heap under 512 MB, self-pings faster than Render's 15-min spin-down and health-checks `/health`; `Procfile`/`nixpacks`/`Dockerfile` agree on the port and the endpoint; the serverless entry never claims to start a bot. |
+| `test-single-host.js` | 19 | The one-host promise, enforced: `render.yaml` has exactly **one** service, stays on `plan: free`, runs one instance of `node index.js`, keeps `BOT_BACKEND_URL` empty, caps the V8 heap under 512 MB, self-pings faster than Render's 15-min spin-down and health-checks `/health`; `Procfile`/`nixpacks`/`Dockerfile` agree on the port and the endpoint; `docker-compose.yml` and the systemd unit restart forever; the Termux script takes a wake-lock; `SERVER_PORT` is read so a panel host's assigned port is bound; `deploy/free-hosts.md` covers every free option and warns about multi-accounting; the serverless entry never claims to start a bot. |
 | `test-serverless.js` | 21 | The Vercel/Lambda entry: callable export, warning-free `vercel.json` + bounded `engines`, static-output hygiene, routing, no bot started, every page 200, honest banner, warm-handler reuse, POST bodies, proxying, 502 on a dead backend, plus the degraded paths (stripped `index.js`, module that throws, backend still reachable) and an import/export consistency check. |
 
 The suites use a 40-line harness (`tests/harness.js`) on top of `node:assert`.

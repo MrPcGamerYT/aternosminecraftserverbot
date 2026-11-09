@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-single-host.js — one host really is enough
 //
-//   npm run test:single-host   (12 tests)
+//   npm run test:single-host   (19 tests)
 //
 // The README promises that an always-on host runs the whole app:
 // dashboard, controls and bot in ONE process, with nothing else to
@@ -122,6 +122,74 @@ test("serverless remains optional, never required", () => {
   assert.ok(vercel.rewrites.some((rule) => /api\/index\.js/.test(rule.destination)));
   const entry = read("api/index.js");
   assert.ok(!/runCycle\(|createBot\(/.test(entry), "api/index.js must not start a bot");
+});
+
+const compose = read("docker-compose.yml");
+const unit = read("deploy/minecraft-afk-bot.service");
+const vmScript = read("deploy/vm-install.sh");
+const termuxScript = read("deploy/termux-install.sh");
+const freeHosts = read("deploy/free-hosts.md");
+
+test("docker-compose is one auto-restarting container with a real healthcheck", () => {
+  const services = compose.match(/^\s{2}[a-z0-9-]+:\s*$/gm) || [];
+  assert.equal(services.length, 1, `expected 1 compose service, found ${services.length}`);
+  assert.ok(/restart:\s*always/.test(compose), "restart: always is what makes a VM 24/7");
+  assert.ok(/\/ping/.test(compose), "healthcheck should hit /ping");
+  assert.ok(/"5000:5000"/.test(compose), "the dashboard port should be published");
+  assert.ok(!/BOT_BACKEND_URL:/.test(compose), "a single-host deploy must not proxy");
+});
+
+test("systemd unit restarts forever and stops cleanly", () => {
+  assert.ok(/^\[Unit\]/m.test(unit) && /^\[Service\]/m.test(unit) && /^\[Install\]/m.test(unit));
+  assert.ok(/^Restart=always$/m.test(unit), "Restart=always missing");
+  assert.ok(/^ExecStart=\/usr\/bin\/node index\.js$/m.test(unit), "ExecStart should run index.js");
+  assert.ok(/^WorkingDirectory=\/opt\/minecraft-afk-bot$/m.test(unit));
+  assert.ok(/^KillSignal=SIGTERM$/m.test(unit), "SIGTERM lets the bot quit the game");
+});
+
+test("vm-install.sh installs Node 20 and enables the unit", () => {
+  assert.ok(/^#!\/usr\/bin\/env bash/.test(vmScript));
+  assert.ok(/set -euo pipefail/.test(vmScript));
+  assert.ok(/NODE_MAJOR="20"/.test(vmScript));
+  assert.ok(/npm ci --omit=dev \|\| npm install --omit=dev/.test(vmScript));
+  assert.ok(/systemctl enable --now minecraft-afk-bot/.test(vmScript));
+});
+
+test("termux-install.sh takes a wake-lock before it hands the bot over", () => {
+  assert.ok(/com\.termux/.test(termuxScript), "shebang should be Termux's bash");
+  assert.ok(/pkg install -y nodejs-lts/.test(termuxScript));
+  assert.ok(/termux-wake-lock/.test(termuxScript), "without a wake-lock Android freezes the bot");
+  assert.ok(/npm ci --omit=dev \|\| npm install --omit=dev/.test(termuxScript));
+});
+
+test("the free-host guide covers every supported shape and the suspension cause", () => {
+  for (const host of ["bot panel", "Oracle", "Termux", "VPS"]) {
+    assert.ok(new RegExp(host, "i").test(freeHosts), `free-hosts.md should cover ${host}`);
+  }
+  assert.ok(/spins? down|spin-down/i.test(freeHosts), "it should explain the spin-down trap");
+  assert.ok(/second account|three accounts|ban evasion/i.test(freeHosts), "it should warn against multi-accounting");
+  // Every artifact it points at must exist.
+  for (const file of ["docker-compose.yml", "deploy/minecraft-afk-bot.service", "deploy/vm-install.sh", "deploy/termux-install.sh"]) {
+    assert.ok(fs.existsSync(path.join(root, file)), `${file} is referenced but missing`);
+  }
+});
+
+test("the app binds the port a panel host assigns (SERVER_PORT)", () => {
+  const { resolveHttpPort } = require("../index.js");
+  assert.equal(resolveHttpPort({ SERVER_PORT: "32728" }), 32728, "Botkeep/Pterodactyl pass SERVER_PORT");
+  assert.equal(resolveHttpPort({ PORT: "8080" }), 8080);
+  assert.equal(resolveHttpPort({ PORT: "3000", SERVER_PORT: "32728" }), 3000, "explicit PORT wins");
+  assert.equal(resolveHttpPort({}), 5000, "local default");
+  assert.equal(resolveHttpPort({ PORT: "nope", SERVER_PORT: "x" }), 5000, "garbage falls back");
+});
+
+test("the Botkeep guide matches what the panel actually needs", () => {
+  assert.ok(/Botkeep/.test(freeHosts), "the guide should cover Botkeep");
+  assert.ok(/SERVER_PORT/.test(freeHosts), "it should explain the assigned port");
+  assert.ok(/npm start/.test(freeHosts), "start command the panel runs");
+  assert.ok(/max-old-space-size/.test(freeHosts), "heap cap for the 512 MB pool");
+  assert.ok(/package\.json at the archive root|package\.json`? at the archive root/i.test(freeHosts),
+    "ZIP root requirement is what makes an upload fail silently");
 });
 
 run("single-host deploy");
