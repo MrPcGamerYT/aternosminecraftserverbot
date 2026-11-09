@@ -11,7 +11,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 ```
 npm install
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 111 tests, no framework, no network
+npm run test:all   # 115 tests, no framework, no network
 ```
 
 ---
@@ -449,7 +449,7 @@ Keep it to **one** bot instance per username.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 8 suites (111 tests)
+npm run test:all          # syntax + all 8 suites (115 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -461,7 +461,7 @@ npm run test:all          # syntax + all 8 suites (111 tests)
 | `test-provider.js` | 21 | Status map 0–10, token exclusivity, base URL scheme, start/stop/restart paths, error surfacing, token scrubbing, endpoint wiring. |
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
-| `test-serverless.js` | 12 | The Vercel/Lambda entry: callable export, `vercel.json` routing, no bot started, every page 200, honest banner, warm-handler reuse, POST bodies, proxying, 502 on a dead backend. |
+| `test-serverless.js` | 16 | The Vercel/Lambda entry: callable export, `vercel.json` routing, no bot started, every page 200, honest banner, warm-handler reuse, POST bodies, proxying, 502 on a dead backend, plus the degraded paths (stripped `index.js`, module that throws, backend still reachable) and an import/export consistency check. |
 
 The suites use a 40-line harness (`tests/harness.js`) on top of `node:assert`.
 They start real local HTTP servers where behaviour matters, and they never touch
@@ -513,12 +513,32 @@ Correct — a serverless function cannot hold a Minecraft TCP connection. Run th
 on an always-on host and set `BOT_BACKEND_URL` here.
 
 **Vercel shows `500: INTERNAL_SERVER_ERROR` / `FUNCTION_INVOCATION_FAILED`**
-The deployment has no request handler. This repo ships one at `api/index.js`
-plus the `vercel.json` rewrite; make sure the project's **Root Directory** is the
-repository root (not a subfolder), that `index.js`, `api/index.js` and
-`settings.json` are committed, and that the build ran `npm install`. Check the
-function logs with `vercel logs <deployment-url>`; the handler logs its mode on
-cold start (`[Serverless] Request handler created (mode: …)`).
+The function threw while loading. This repo ships the handler at `api/index.js`
+plus the `vercel.json` rewrite, and the handler has three layers of fallback:
+
+1. the full dashboard from `../index.js`;
+2. a dependency-free page that names the load error and explains the fix;
+3. plain `http` forwarding when a backend is configured.
+
+So a 500 now only means the *file itself* failed (bad syntax) or the project
+config is wrong. Check, in order:
+
+* **Root Directory** on Vercel is the repository root, not a subfolder;
+* `api/index.js`, `index.js`, `settings.json`, `package.json` and
+  `vercel.json` are committed on the deployed branch;
+* the build ran `npm install` (Vercel → Deployments → build log);
+* `vercel logs <deployment-url>` for the actual stack trace.
+
+The handler logs its mode on cold start:
+`[Serverless] Request handler created (mode: serverless) — no Minecraft session is started here`.
+If you see the "Dashboard unavailable in this runtime" page instead, the message
+on it names the exact reason (e.g. *index.js does not export a serverless
+handler*), which is the case to fix in code.
+
+> **Never delete the `SERVERLESS ENTRY` block in `index.js`.** `api/index.js`
+> imports `makeServerlessHandler` from it. `tests/test-serverless.js` asserts the
+> import list matches the exports, so `npm run test:all` fails instead of the
+> production site 500ing.
 
 **Server buttons return 409 "reporting mode"**
 No provider API is configured. Set `EXAROTON_TOKEN` + `EXAROTON_SERVER_ID`, or start

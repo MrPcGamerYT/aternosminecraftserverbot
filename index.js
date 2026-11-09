@@ -871,6 +871,11 @@ const runtime = {
   simulation: false,
   lease: null,
   leaseHandle: null,
+
+  // Set by the serverless entry point: this process serves the dashboard but
+  // can never own a Minecraft session, so the phase must say so from request
+  // one instead of claiming to be "starting".
+  serverlessOnly: false,
 };
 
 // Single owners for every timer in the process.
@@ -916,6 +921,9 @@ function botCoordinates() {
 function reconcilePhase() {
   if (runtime.policyBlocked) return "policy-blocked";
   if (runtime.intent === "stopped") return "stopped";
+  // Nothing can be connected here and nothing is retrying: never report
+  // "starting" / "connecting" from a process that has no bot.
+  if (runtime.serverlessOnly) return "stopped";
   if (runtime.bot && runtime.spawnHandled) return "connected";
   // An environment-level stop (serverless / proxy) is terminal: never report it
   // as "disconnected and retrying" when nothing is retrying.
@@ -955,7 +963,9 @@ function publicState() {
             : "Disconnected",
     statusDetail: describeStatus(phase, {
       serverLabel: serverTarget.label,
-      statusDetail: runtime.statusDetail,
+      statusDetail: runtime.serverlessOnly
+        ? "No bot can run in a serverless function — see the banner below"
+        : runtime.statusDetail,
       lastDisconnectReason: runtime.lastDisconnectReason,
       policyReason: runtime.policyReason,
     }),
@@ -1001,7 +1011,7 @@ function publicState() {
         platform: serverlessNow.platform,
         proxy: proxyNow.proxy,
         backend: proxyNow.backend,
-        backendError: proxyNow.error,
+        backendError: proxyNow.error || runtime.backendError || null,
         node: process.version,
         hostname: os.hostname(),
       };
@@ -2697,6 +2707,7 @@ setTimeout(function () { location.reload(); }, 15000);
 function createApp(options = {}) {
   const app = express();
   app.disable("x-powered-by");
+  runtime.backendError = null;
 
   // ---- proxy passthrough ---------------------------------------------
   // When BOT_BACKEND_URL is set, every request is forwarded verbatim
@@ -2722,6 +2733,8 @@ function createApp(options = {}) {
 
   if (proxyOption && proxyOption.error) {
     addLog(`[Proxy] BOT_BACKEND_URL ignored: ${proxyOption.error}`);
+    // Surface it in the dashboard instead of only in the console.
+    runtime.backendError = proxyOption.error;
   }
 
   app.use(express.json({ limit: "256kb" }));
@@ -3285,6 +3298,81 @@ function installProcessHandlers() {
 // embedded/test harness gets the same graceful shutdown guarantees.
 installProcessHandlers();
 
+// ============================================================================
+//  SERVERLESS ENTRY (VERCEL / NETLIFY / LAMBDA)
+//
+//  A platform function must hand back a request handler, not a listening
+//  socket. This factory does that without booting the bot:
+//
+//    * the Express app is reused across warm invocations;
+//    * in proxy mode every request is forwarded to the always-on bot;
+//    * with no backend the dashboard renders the honest
+//      "serverless — no bot can run here" banner instead of a 500.
+//
+//  It never starts the Minecraft session: a function cannot hold a TCP
+//  connection open, so pretending otherwise is exactly what we refuse to do.
+//
+//  NOTE: api/index.js imports these names. If they ever disappear again the
+//  deployed function throws at load and Vercel answers 500 on every request,
+//  which is why the entry point also has a dependency-free fallback.
+// ============================================================================
+
+let cachedHandler = null;
+
+/** Mark this process as dashboard-only (serverless runtime). */
+function markServerlessOnly() {
+  if (runtime.serverlessOnly) return;
+  runtime.serverlessOnly = true;
+  const info = detectServerless(env);
+  runtime.intent = "stopped";
+  setPhase(
+    "stopped",
+    info.serverless
+      ? `Serverless runtime (${info.platform}) — no bot can run here`
+      : "Dashboard-only process — no bot is running here",
+  );
+}
+
+function createServerlessHandler(options = {}) {
+  if (cachedHandler && !options.fresh) return cachedHandler;
+  const app = createApp(options);
+  const handler = (req, res) => app(req, res);
+
+  handler.app = app;
+  handler.kind = "express-handler";
+  // Platforms look for a default export; expose it without losing the extras.
+  handler.default = handler;
+
+  cachedHandler = handler;
+  return handler;
+}
+
+/** Vercel/Netlify style adapter: `module.exports = makeServerlessHandler()`. */
+function makeServerlessHandler(options = {}) {
+  // A function invocation can never hold a Minecraft session: mark the runtime
+  // so every status surface reports "stopped" with an explanation instead of
+  // "starting" forever.
+  markServerlessOnly();
+  if (!options.silent) {
+    addLog(
+      `[Serverless] Request handler created (mode: ${resolveRunMode(env).mode}) — no Minecraft session is started here`,
+    );
+  }
+  return createServerlessHandler({ ...options, silent: true });
+}
+
+/**
+ * Normalise a Node handler for platforms that pass (event, context):
+ * Vercel's Node runtime and Netlify both hand us an IncomingMessage /
+ * ServerResponse pair, which express consumes directly.
+ */
+function toPlatformHandler(handler) {
+  const wrapped = (req, res, next) => handler(req, res, next);
+  wrapped.default = wrapped;
+  wrapped.kind = "express-handler";
+  return wrapped;
+}
+
 if (IS_MAIN) {
   boot().catch((err) => {
     addLog(`[Boot] Fatal startup error: ${err && err.message ? err.message : err}`);
@@ -3292,7 +3380,7 @@ if (IS_MAIN) {
   });
 }
 
-module.exports = {
+const exported = {
   VERSION,
   config,
   runtime,
@@ -3368,8 +3456,31 @@ module.exports = {
   getLogs,
   getLogText,
   subscribe,
+  // serverless
+  createApp,
+  createServerlessHandler,
+  makeServerlessHandler,
+  markServerlessOnly,
+  toPlatformHandler,
   // re-exports for tests / advanced use
   probe: probeModule,
   watcher: watcherModule,
   providerModule,
 };
+
+// `module.exports` stays an object: that is the library surface the tests and
+// the CLI use. Platforms get a handler from `makeServerlessHandler()`
+// (see api/index.js), never from this object directly.
+//
+// The getter means `require("./index.js").default` is a real handler on a
+// serverless runtime -- some adapters look for exactly that -- while staying
+// undefined locally, where there is no handler to give.
+Object.defineProperty(exported, "default", {
+  enumerable: false,
+  configurable: true,
+  get() {
+    return detectServerless(env).serverless ? makeServerlessHandler({ silent: true }) : undefined;
+  },
+});
+
+module.exports = exported;
