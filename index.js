@@ -2346,6 +2346,17 @@ function sendConsoleCommand(command) {
   const cmd = String(command || "").trim();
   if (!cmd) return { ok: false, msg: "Empty command." };
 
+  // This box sends Minecraft chat, it is not a shell. People type `npm install`
+  // here because a Pterodactyl console looks the same, then are told "Bot is not
+  // connected yet" and think the install failed. Say what actually happened.
+  if (/^(npm|npx|pnpm|yarn|node|git|ls|cd|cat|rm|cp|mv|curl|wget|apt|apk|sudo|bash|sh|docker)\b/.test(cmd)) {
+    const msg =
+      `"${cmd.split(/\s+/)[0]}" is a shell command — this box only sends Minecraft chat and commands. ` +
+      "npm install runs by itself when the server starts; to run the doctor set MAIN_FILE=doctor.js in Startup and restart.";
+    addLog(`[Console] ${msg}`);
+    return { ok: false, msg };
+  }
+
   if (cmd === "/help") {
     const lines = [
       "Available commands:",
@@ -2357,7 +2368,7 @@ function sendConsoleCommand(command) {
       "  /stop          Stop the bot",
       "  /say <text>    Chat in-game",
       "  /<anything>    Send any Minecraft command",
-      "  <text>         Send plain chat",
+      "  <text>         Send plain chat (this box is not a shell)",
     ];
     lines.forEach((line) => addLog(`[Console] ${line}`));
     return { ok: true, msg: lines.join("\n") };
@@ -2603,9 +2614,11 @@ function renderDashboard(state) {
     </div>
     <div class="row" style="margin-top:10px">
       <input id="cmd" class="btn ghost" style="flex:2 1 240px;text-align:left;cursor:text"
-             placeholder="say Hello  ·  /list  ·  /pos" autocomplete="off">
+             placeholder="chat: hello  ·  /say hi  ·  /list  ·  /pos" autocomplete="off">
       <button class="btn" id="send">Send</button>
     </div>
+    <p class="status-detail" style="margin:6px 0 0">Text goes to Minecraft chat; anything starting with <code>/</code> is a command.
+      This is not a shell — <code>npm install</code> runs when the server starts.</p>
     <div id="result" class="status-detail" style="margin-top:10px"></div>
   </div>
 

@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-chat.js — chat that reads like a person, not a cron
 //
-//   npm run test:chat   (5 tests)
+//   npm run test:chat   (9 tests)
 //
 // A fixed 120s timer sending the same list in the same order is the
 // clearest "this is a bot" signature a server can see. These tests pin
@@ -61,6 +61,66 @@ test("5. 420s with jitter means a message every 4-10 minutes, not every 2", () =
   assert.ok(min >= 252000 && max <= 588000, `range ${min}-${max}`);
   const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
   assert.ok(avg > 380000 && avg < 460000, `average drifted: ${avg}`);
+});
+
+test("6. plain text is chat, and /say strips the prefix", () => {
+  const sent = [];
+  const savedBot = index.runtime.bot;
+  const savedIntent = index.runtime.intent;
+  index.runtime.bot = { username: "u", chat: (message) => sent.push(message) };
+  index.runtime.intent = "running";
+  try {
+    const plain = index.sendConsoleCommand("hello there");
+    const said = index.sendConsoleCommand("/say hi");
+    assert.equal(plain.ok, true);
+    assert.equal(said.ok, true);
+    assert.deepEqual(sent, ["hello there", "hi"]);
+  } finally {
+    index.runtime.bot = savedBot;
+    index.runtime.intent = savedIntent;
+  }
+});
+
+test("7. shell commands are refused with an explanation, not 'not connected'", () => {
+  const savedBot = index.runtime.bot;
+  index.runtime.bot = null;
+  try {
+    for (const cmd of ["npm install", "node doctor.js", "git pull", "ls"]) {
+      const result = index.sendConsoleCommand(cmd);
+      assert.equal(result.ok, false, cmd);
+      assert.ok(/shell command/.test(result.msg), `${cmd} -> ${result.msg}`);
+      assert.ok(!/not connected/.test(result.msg), `${cmd} -> ${result.msg}`);
+      assert.ok(/MAIN_FILE=doctor\.js/.test(result.msg), `${cmd} -> ${result.msg}`);
+    }
+    // A real Minecraft command that happens to start with a slash still works.
+    index.runtime.bot = { username: "u", chat: () => {} };
+    const list = index.sendConsoleCommand("/list");
+    assert.equal(list.ok, true, list.msg);
+  } finally {
+    index.runtime.bot = savedBot;
+  }
+});
+
+test("8. with no bot, chat says which state it is in", () => {
+  const savedBot = index.runtime.bot;
+  const savedIntent = index.runtime.intent;
+  index.runtime.bot = null;
+  index.runtime.intent = "running";
+  try {
+    assert.ok(/not connected yet/.test(index.sendConsoleCommand("hi").msg));
+    index.runtime.intent = "stopped";
+    assert.ok(/stopped/.test(index.sendConsoleCommand("hi").msg));
+  } finally {
+    index.runtime.bot = savedBot;
+    index.runtime.intent = savedIntent;
+  }
+});
+
+test("9. /help explains that the box is not a shell", () => {
+  const help = index.sendConsoleCommand("/help");
+  assert.equal(help.ok, true);
+  assert.ok(/not a shell/.test(help.msg), help.msg);
+  assert.ok(/\/say <text>/.test(help.msg), help.msg);
 });
 
 run("chat");

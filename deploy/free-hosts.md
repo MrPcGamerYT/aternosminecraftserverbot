@@ -630,6 +630,56 @@ first.
    unambiguously the product: a VM (section 3), Termux (section 4), or a paid VPS
    (section 5).
 
+## 12. Lunafy (`panel.lunafy.run`)
+
+Lunafy is a **Discord-bot** host on Pterodactyl. The bot runs fine there; the
+dashboard does not, and it is cheaper to know that before uploading.
+
+| | Free server |
+| --- | --- |
+| RAM / CPU / disk | 256 MB, 0.5 vCPU, 512 MB (their pricing page; some marketing pages say 512 MB — trust what the panel shows) |
+| Renewal | every 7 days, one click |
+| Card | not needed |
+| Open port | **no** — "additional servers and **open ports** are paid" |
+| Web servers | **not allowed** by their terms |
+| Other | your free server is deleted if it expires; you must stay in their Discord |
+
+### The dashboard cannot be reached on the free plan
+
+No allocation means no `http://IP:PORT` for you. Buying a port from them turns
+the dashboard back on (set `DASHBOARD_PASSWORD` first, the port is public), but on
+the free plan the URL does not exist and their terms call a web server a
+violation — do not try to work around it with a tunnel.
+
+### You can still talk, from the panel console
+
+The dashboard text box and the panel console go to the same function: text
+becomes Minecraft chat, `/something` becomes a Minecraft command.
+
+| You type in the **Console** tab | Result |
+| --- | --- |
+| `hello` | says `hello` in game |
+| `/say hi` | says `hi` in game (same thing) |
+| `/list` | runs `/list` in game |
+| `/status` | connection state and session uptime |
+| `/pos` | bot coordinates |
+| `npm install` | refused: *"npm is a shell command — this box only sends Minecraft chat"* |
+
+That console is the process's stdin. `npm install` and `node doctor.js` typed
+there do nothing; dependencies install when the server starts, and to run the
+doctor you set `MAIN_FILE=doctor.js` in **Startup** and restart.
+
+### Upload checklist for Lunafy
+
+1. **Startup → Node.js** egg, `MAIN_FILE=index.js`, `NODE_OPTIONS=--max-old-space-size=192`.
+2. Upload the ZIP, unzip **into the container root** (no extra folder), `npm ci --omit=dev`.
+3. `settings.json` keeps the humanised chat from section 11.
+4. No `PORT` needed — with no allocation there is nothing to serve, and the app
+   starts either way.
+5. Ask in their Discord whether a Minecraft AFK client is welcome. Their whole
+   pitch is Discord bots, their terms only rule out web servers, but SillyDev
+   suspension stories start with assuming.
+
 ## What not to do on the next host
 
 * **Do not deploy this on another PaaS free tier with the self-ping on.** Render,
