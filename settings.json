@@ -1,18 +1,18 @@
 {
-  "name": "AFK Bot",
+  "name": "FKtheserverhost",
   "bot-account": {
-    "username": "SoloCloudHosting",
+    "username": "OfflinePlayer",
     "password": "",
     "type": "offline"
   },
   "server": {
-    "ip": "soloplayzaternos123.aternos.me",
-    "port": 52076,
-    "version": false,
+    "ip": "ZLAG.aternos.me",
+    "port": 39033,
+    "version": "1.21.1",
     "try-creative": false
   },
   "position": {
-    "enabled": false,
+    "enabled": true,
     "x": 0,
     "y": 100,
     "z": 0
@@ -20,18 +20,22 @@
   "utils": {
     "auto-auth": {
       "enabled": false,
-      "password": ""
+      "password": "ZLAG"
     },
     "anti-afk": {
       "enabled": true,
-      "sneak": false
+      "sneak": true
     },
     "chat-messages": {
-      "enabled": false,
-      "repeat": false,
+      "enabled": true,
+      "repeat": true,
       "repeat-delay": 120,
       "messages": [
-        "I'm a regular player"
+        "Don't Come at me",
+        "I will Ban You!",
+        "Don't try to think That",
+        "you can't still close",
+        "lwl"
       ]
     },
     "chat-log": true,
@@ -60,7 +64,7 @@
   "movement": {
     "enabled": true,
     "circle-walk": {
-      "enabled": false,
+      "enabled": true,
       "radius": 4,
       "speed": 3000
     },
@@ -69,19 +73,19 @@
       "interval": 5000
     },
     "random-jump": {
-      "enabled": false,
+      "enabled": true,
       "interval": 10000
     }
   },
   "modules": {
-    "avoidMobs": false,
-    "combat": false,
+    "avoidMobs": true,
+    "combat": true,
     "beds": false,
     "chat": true,
     "console-commands": true
   },
   "combat": {
-    "attack-mobs": false,
+    "attack-mobs": true,
     "auto-eat": true
   },
   "beds": {
@@ -98,13 +102,13 @@
     }
   },
   "chat": {
-    "respond": false
+    "respond": true
   },
   "provider": {
     "enabled": true,
     "exaroton-server-id": "",
     "exaroton-server-address": "",
     "status-cache-ms": 15000,
-    "manual-start-hint": "No provider API is configured. Start the server in your host's panel \u2014 the bot joins automatically once the port answers."
+    "manual-start-hint": "No provider API is configured. Start the server in your host's panel — the bot joins automatically once the port answers."
   }
 }
