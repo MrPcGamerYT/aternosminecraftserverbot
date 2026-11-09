@@ -267,6 +267,34 @@ Minecraft session needs a process that stays alive.
 
 ---
 
+### Panels have no shell — doing "npm install" and "doctor" the right way
+
+On SillyDev/Botkeep/Pterodactyl you **cannot** type `npm install` or `node doctor.js`
+into the console while the server is running: that console is the *bot's* stdin,
+so the command lands in the game chat handler and the reply is
+`[Console] Bot is not connected yet.` (harmless, but it is not a shell).
+
+What works instead:
+
+| You want to run | How |
+| --- | --- |
+| `npm install` | It runs by itself on every start (`if [ -f /home/container/package.json ]; then npm install`). To force a clean one, use **File Manager → delete `node_modules`** → Start. |
+| `node doctor.js` | Set `MAIN_FILE` to `doctor.js` in the Startup tab, press Start, read the output, then set it back to `index.js`. |
+| a shell command | Only on a VM/VPS. A panel does not give you one. |
+
+**`Cannot find module '../minecraft-data/data/pc/common/features.json'`** means
+the dependency download was incomplete — an interrupted install, two installs at
+once, or a full disk. Resolving the package still works, so nothing complains
+until the bot tries to log in. Fix:
+
+1. File Manager → delete the **`node_modules`** folder.
+2. Start the server (the egg reinstalls), or on a VM: `npm run repair`.
+
+`npm run doctor` now catches this before you press Start:
+`[FAIL] Mineflayer loads: ... delete node_modules and reinstall`.
+
+---
+
 ## 2b. SillyDev, start to finish
 
 SillyDev (`sillydev.co.uk`) is a Pterodactyl panel: no build step, you run npm in
@@ -292,7 +320,24 @@ its console. Free container, no card.
 4. **Environment** — `NODE_OPTIONS=--max-old-space-size=192` on a 256 MB server,
    `384` on 512 MB. Do **not** set `PORT` (the panel's `SERVER_PORT` is read
    automatically) and do **not** set `PUBLIC_URL`.
-5. **Press Start.** The console is the dashboard:
+5. **Pre-flight, before you press Start:**
+   ```
+   node doctor.js
+   ```
+   It prints one line per check and tells you exactly what is wrong if it is not
+   ready — files still inside an extra folder, `npm install` never run, Node 25,
+   an empty target, or the port the panel assigned:
+   ```
+   [ ok ] Node version: v22.22.0
+   [ ok ] Files: 8 required files at the project root
+   [ ok ] Dependencies: express, mineflayer, minecraft-data resolved
+   [ ok ] Minecraft target: ZLAG.aternos.me:39033 (1.21.1)
+   [ ok ] Account: OfflinePlayer (offline)
+   [ ok ] Dashboard port: 6158 from SERVER_PORT (panel)
+
+   Ready to start. Run: npm start
+   ```
+6. **Press Start.** The console is the dashboard:
    ```
    [Server] Dashboard listening on http://0.0.0.0:6158
    [Boot] Bot started
@@ -302,7 +347,7 @@ its console. Free container, no card.
    ```
    `Not ready` probes are Aternos still booting; after 6 probes the bot forces a
    login, which is why it joins even then.
-6. **The session must stay up.** If you see `[Watchdog] Socket silent for ~92s`
+7. **The session must stay up.** If you see `[Watchdog] Socket silent for ~92s`
    in a loop, that was the liveness bug fixed in `0b31854` — make sure
    `index.js` is the current one from `main`.
 
