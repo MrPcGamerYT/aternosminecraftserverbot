@@ -267,6 +267,61 @@ Minecraft session needs a process that stays alive.
 
 ---
 
+## 2b. SillyDev, start to finish
+
+SillyDev (`sillydev.co.uk`) is a Pterodactyl panel: no build step, you run npm in
+its console. Free container, no card.
+
+> **Node version:** its egg currently ships **Node 25**, which is outside this
+> repo's `>=20 <23` range (`npm warn EBADENGINE`). It runs, but mineflayer is
+> untested there — use the **Startup** tab's Node version variable or a "Node.js
+> 22" egg if one is offered.
+
+1. **Create the server** — Node.js egg, small RAM allocation (256 MB is enough
+   for this bot; 512 MB is comfortable).
+2. **Get the files in.** GitHub → **Code → Download ZIP**, upload it in **File
+   Manager**, then in the **Console**:
+   ```
+   unzip *.zip
+   mv aternosminecraftserverbot-main/* .
+   npm install --omit=dev
+   ```
+   (Or, if the server is already set up, updating one file is enough:
+   `curl -o index.js https://raw.githubusercontent.com/MrPcGamerYT/aternosminecraftserverbot/main/index.js`)
+3. **Startup tab** — main file `index.js`, command `node index.js`.
+4. **Environment** — `NODE_OPTIONS=--max-old-space-size=192` on a 256 MB server,
+   `384` on 512 MB. Do **not** set `PORT` (the panel's `SERVER_PORT` is read
+   automatically) and do **not** set `PUBLIC_URL`.
+5. **Press Start.** The console is the dashboard:
+   ```
+   [Server] Dashboard listening on http://0.0.0.0:6158
+   [Boot] Bot started
+   [Probe] Not ready (port open, no status reply) — probe 1/6
+   [Chat] OfflinePlayer joined the game
+   [Bot] Spawned in ... (version 1.21.1)
+   ```
+   `Not ready` probes are Aternos still booting; after 6 probes the bot forces a
+   login, which is why it joins even then.
+6. **The session must stay up.** If you see `[Watchdog] Socket silent for ~92s`
+   in a loop, that was the liveness bug fixed in `0b31854` — make sure
+   `index.js` is the current one from `main`.
+
+### Wiring the panel to a Vercel dashboard
+
+The bot listens on the panel's assigned port (e.g. `6158`). For the vercel.app
+page to show the live session, that port must be reachable from the internet:
+
+1. Panel → **Network / Allocation** → copy the server address
+   (`node-xx.sillydev.co.uk:6158` or `IP:6158`).
+2. Open `http://<that address>/health` in a browser.
+   * **JSON** → Vercel → Settings → Environment Variables →
+     `BOT_BACKEND_URL=http://<that address>` → **Redeploy**. The Vercel page now
+     proxies every request (status, logs, Start/Stop) to the bot.
+   * **Timeout / refused** → the free panel does not expose HTTP ports. The
+     console stays your dashboard; a public URL needs a VM (section 3 or 5).
+
+---
+
 ## 3. Oracle Cloud Always Free — the genuinely unlimited one
 
 Real VM, free forever, no sleep, no instance-hour accounting, 4 ARM cores and up

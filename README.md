@@ -549,6 +549,10 @@ Leave `PORT` unset: Botkeep passes the assigned port as `SERVER_PORT` and the ap
 binds it. Full walkthrough with the exact console output:
 [`deploy/free-hosts.md`](deploy/free-hosts.md#1-botkeep--step-by-step).
 
+SillyDev has its own walkthrough (panel setup, the one-file update, and wiring
+the panel port to a Vercel dashboard):
+[`deploy/free-hosts.md`](deploy/free-hosts.md#2b-sillydev-start-to-finish).
+
 Other Pterodactyl-style panels (HeavenCloud, SillyDev, Waifly) have no build
 step — `unzip`, `npm ci --omit=dev`, startup command `node index.js`. Those
 panels give no public URL, so the console is your dashboard; the bot is identical.
