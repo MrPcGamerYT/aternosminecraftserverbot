@@ -146,29 +146,41 @@ test("8. a half-written install is caught at load time, not at login", () => {
   assert.equal(result.ok, false);
 });
 
-test("9. repeating chat is flagged as spam, quiet chat is not", () => {
-  const spam = sandbox({
-    ...ALL_FILES,
-    "settings.json": JSON.stringify({
+test("9. fast repeating chat is flagged as spam, a slow human pace is not", () => {
+  const settings = (chat) =>
+    JSON.stringify({
       "bot-account": { username: "u", type: "offline" },
       server: { ip: "h.example", port: 25565 },
-      utils: { "chat-messages": { enabled: true, repeat: true, "repeat-delay": 120, messages: ["hi", "buy gold"] } },
-    }),
-  });
-  const flagged = runChecks({ root: spam }).checks.find((c) => c.name === "Chat automation");
-  assert.equal(flagged.status, "warn");
-  assert.ok(/120s/.test(flagged.detail), flagged.detail);
-  assert.ok(/spam/.test(flagged.detail));
+      utils: { "chat-messages": chat },
+    });
+  const check = (chat) =>
+    runChecks({ root: sandbox({ ...ALL_FILES, "settings.json": settings(chat) }) }).checks.find(
+      (c) => c.name === "Chat automation",
+    );
 
-  const quiet = sandbox({
-    ...ALL_FILES,
-    "settings.json": JSON.stringify({
-      "bot-account": { username: "u", type: "offline" },
-      server: { ip: "h.example", port: 25565 },
-      utils: { "chat-messages": { enabled: false } },
-    }),
+  const spam = check({ enabled: true, repeat: true, "repeat-delay": 30, messages: ["hi", "buy gold"] });
+  assert.equal(spam.status, "warn");
+  assert.ok(/30s/.test(spam.detail), spam.detail);
+  assert.ok(/spam/.test(spam.detail));
+
+  const threat = check({ enabled: true, repeat: true, "repeat-delay": 300, messages: ["I will Ban You!"] });
+  assert.equal(threat.status, "warn");
+  assert.ok(/threat/.test(threat.detail), threat.detail);
+
+  const human = check({
+    enabled: true,
+    repeat: true,
+    "repeat-delay": 420,
+    "only-when-players-online": true,
+    messages: ["lol", "brb"],
   });
-  assert.equal(runChecks({ root: quiet }).checks.find((c) => c.name === "Chat automation").status, "ok");
+  assert.equal(human.status, "ok");
+  assert.ok(/jitter/.test(human.detail), human.detail);
+  assert.ok(/only when someone else is online/.test(human.detail), human.detail);
+
+  const off = check({ enabled: false });
+  assert.equal(off.status, "ok");
+  assert.ok(/off/.test(off.detail), off.detail);
 });
 
 run("doctor");

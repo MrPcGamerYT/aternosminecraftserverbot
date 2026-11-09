@@ -569,13 +569,45 @@ look like the banned list:
 
 | What in the config | How a host reads it | Fix |
 | --- | --- | --- |
-| `utils."chat-messages"` with `repeat: true` — five messages every 120 s, including "I will Ban You!" | chat spam; also a fast way to get banned by the Minecraft server | `"enabled": false` (presets in `settings.json`) |
+| `utils."chat-messages"` with `repeat: true` and a gap under ~2 minutes, or a line like "I will Ban You!" | chat spam, and a fast way to get banned by the Minecraft server | keep gaps at 300 s or more, delete threats — `npm run doctor` checks both |
 | A reconnect loop (the old 90 s watchdog bug, `probe-not-ready` storms) | "undue strain … on third-party servers" | update `index.js`; verified fixed in `0b31854` |
 | Two servers, or a second account after a suspension | ban evasion — the account is terminated and so is the replacement | one account, one server |
 
 `npm run doctor` now warns about the first one:
 `[warn] Chat automation: repeating 5 message(s) every 120s — hosts and Minecraft
 servers call this spam`.
+
+### Chat: wanted, but at a human pace
+
+Talking is the single most human-looking thing this bot does, and on a shared
+server it is the difference between "someone is AFK" and "a bot is farming".
+It is also the easiest way to look like a spambot, so the code does three things:
+
+| Rule | Why |
+| --- | --- |
+| every gap is **60-140%** of `repeat-delay`, 5 s floor | a fixed 120 s timer is the clearest bot signature there is |
+| a line is **never sent twice in a row** | round-robin through a 5-line list repeats visibly |
+| `"only-when-players-online": true` | no monologues on an empty server, where nobody can read them anyway |
+
+A setting that looks human on a small server:
+
+```json
+"chat-messages": {
+  "enabled": true,
+  "repeat": true,
+  "repeat-delay": 420,
+  "only-when-players-online": true,
+  "messages": ["brb", "afk a bit", "lol", "back"]
+}
+```
+
+That is a line every 4-10 minutes while someone else is online: nothing a host
+would call spam, nothing a server would call a bot.
+
+**Honest limit:** chat does not fool the hosting provider. Aternos decides about
+AFK bots from connection behaviour and their own rules, not from whether the
+account types "brb" — so a suspended Aternos server stays suspended. What chat
+buys you is that other players and server staff treat the account as a person.
 
 ### Your Minecraft server can suspend you too
 

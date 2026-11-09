@@ -172,21 +172,32 @@ function runChecks(options = {}) {
       fail("Account", "bot-account.username is empty");
     }
 
-    // Hosts' acceptable-use policies call repeating chat "spam" — SillyDev's
-    // terms list "excessive spamming of any kind, including chat messages" as a
-    // suspendable offence, and Minecraft servers ban for it too.
+    // Chat is how a bot looks human to a server, but hosts' policies call fast
+    // repeating chat "spam" and threats get accounts banned. Judge both.
     const chat = (config.utils && config.utils["chat-messages"]) || {};
+    const chatMessages = Array.isArray(chat.messages) ? chat.messages.filter(Boolean) : [];
     const repeatEvery = Number(chat["repeat-delay"]) || 120; // seconds in settings.json
-    if (chat.enabled === true && chat.repeat === true) {
+    const THREAT = /\b(ban|banned|kick|report|hack|ip ?log|ddos)\w*/i;
+    const threats = chatMessages.filter((m) => THREAT.test(String(m)));
+    if (chat.enabled !== true) {
+      ok("Chat automation", "off (no automated chat)");
+    } else if (chatMessages.length === 0) {
+      warn("Chat automation", "enabled but the message list is empty, so nothing is sent");
+    } else if (chat.repeat === true && repeatEvery < 120) {
       warn(
         "Chat automation",
-        `repeating ${(chat.messages || []).length} message(s) every ${repeatEvery}s — ` +
-          "hosts and Minecraft servers call this spam; set utils.\"chat-messages\".enabled to false",
+        `repeating ${chatMessages.length} message(s) every ${repeatEvery}s — hosts call this spam; use 300s or more`,
       );
-    } else if (chat.enabled === true) {
-      ok("Chat automation", "enabled, not repeating");
+    } else if (threats.length > 0) {
+      warn("Chat automation", `message looks like a threat: "${threats[0]}" — servers ban for this`);
+    } else if (chat.repeat === true) {
+      ok(
+        "Chat automation",
+        `${chatMessages.length} random message(s) every ~${repeatEvery}s with jitter` +
+          (chat["only-when-players-online"] === true ? ", only when someone else is online" : ""),
+      );
     } else {
-      ok("Chat automation", "off (no automated chat)");
+      ok("Chat automation", `${chatMessages.length} message(s) once after joining`);
     }
 
     const watchdog = (config.utils && config.utils.watchdog) || {};
