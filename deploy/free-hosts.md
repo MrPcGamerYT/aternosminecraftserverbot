@@ -548,6 +548,56 @@ Deploy on any of them with `sudo bash deploy/vm-install.sh` or
 For a bot that must stay online, one of these removes every free-tier problem at
 once: no queue, no spin-down, no renewal clicks, no ad watching, no suspension.
 
+## 11. Suspensions: what actually gets this bot banned
+
+Read this before you appeal anywhere, because the reason is usually visible in
+your own configuration.
+
+### SillyDev allows this bot. Really.
+
+From their site: *"None of this is about ordinary bots. An AFK client, a chat
+bridge or a helper bot on a server you are allowed to be on is exactly what this
+page is for."* — [`sillydev.co.uk/minecraft-bot-hosting`](https://sillydev.co.uk/minecraft-bot-hosting).
+Their ban list is DDoS tools, stressers, packet flooders, crash exploits and
+"bot swarms that flood a server with fake players", plus, from the terms:
+*"excessive spamming of any kind, including but not limited to chat messages,
+commands, or connection requests"* and *"operating automated connections in a
+manner that places undue strain on the Service or on third-party servers."*
+
+So a silent AFK client is fine. Three things in a *default* copy of this repo
+look like the banned list:
+
+| What in the config | How a host reads it | Fix |
+| --- | --- | --- |
+| `utils."chat-messages"` with `repeat: true` — five messages every 120 s, including "I will Ban You!" | chat spam; also a fast way to get banned by the Minecraft server | `"enabled": false` (presets in `settings.json`) |
+| A reconnect loop (the old 90 s watchdog bug, `probe-not-ready` storms) | "undue strain … on third-party servers" | update `index.js`; verified fixed in `0b31854` |
+| Two servers, or a second account after a suspension | ban evasion — the account is terminated and so is the replacement | one account, one server |
+
+`npm run doctor` now warns about the first one:
+`[warn] Chat automation: repeating 5 message(s) every 120s — hosts and Minecraft
+servers call this spam`.
+
+### Your Minecraft server can suspend you too
+
+This bot connects to **Aternos**. Aternos' rules do not allow AFK bots or
+auto-reconnect clients, and they can suspend the *Aternos server* independently
+of any hosting provider. That risk exists on every host. If the server is yours,
+run Paper locally or on a VPS and allow it there; if it is someone else's, ask
+first.
+
+### How to appeal, without making it worse
+
+1. **Do not create a new account.** Both SillyDev and most panels terminate the
+   replacement account for ban evasion — that is how people lose three accounts in
+   a week (Render, earlier in this file, is the same story).
+2. Ask in their Discord (`discord.gg/Ec4csXrps8`) — SillyDev says support happens
+   there, not by email. Ask for the specific policy paragraph.
+3. Before asking, fix the three rows above, so the answer is "it is fixed" rather
+   than "it was not me".
+4. If the bot itself is what they object to, move to a host where a 24/7 client is
+   unambiguously the product: a VM (section 3), Termux (section 4), or a paid VPS
+   (section 5).
+
 ## What not to do on the next host
 
 * **Do not deploy this on another PaaS free tier with the self-ping on.** Render,

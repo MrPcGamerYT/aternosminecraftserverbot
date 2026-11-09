@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-doctor.js — the pre-flight check itself
 //
-//   npm run test:doctor   (8 tests)
+//   npm run test:doctor   (9 tests)
 //
 // doctor.js is what a user runs when "it did not start" and the
 // only feedback is a panel console. Every failure mode it claims
@@ -144,6 +144,31 @@ test("8. a half-written install is caught at load time, not at login", () => {
   assert.ok(/features\.json/.test(loads.detail), loads.detail);
   assert.ok(/npm run repair/.test(loads.detail), loads.detail);
   assert.equal(result.ok, false);
+});
+
+test("9. repeating chat is flagged as spam, quiet chat is not", () => {
+  const spam = sandbox({
+    ...ALL_FILES,
+    "settings.json": JSON.stringify({
+      "bot-account": { username: "u", type: "offline" },
+      server: { ip: "h.example", port: 25565 },
+      utils: { "chat-messages": { enabled: true, repeat: true, "repeat-delay": 120, messages: ["hi", "buy gold"] } },
+    }),
+  });
+  const flagged = runChecks({ root: spam }).checks.find((c) => c.name === "Chat automation");
+  assert.equal(flagged.status, "warn");
+  assert.ok(/120s/.test(flagged.detail), flagged.detail);
+  assert.ok(/spam/.test(flagged.detail));
+
+  const quiet = sandbox({
+    ...ALL_FILES,
+    "settings.json": JSON.stringify({
+      "bot-account": { username: "u", type: "offline" },
+      server: { ip: "h.example", port: 25565 },
+      utils: { "chat-messages": { enabled: false } },
+    }),
+  });
+  assert.equal(runChecks({ root: quiet }).checks.find((c) => c.name === "Chat automation").status, "ok");
 });
 
 run("doctor");

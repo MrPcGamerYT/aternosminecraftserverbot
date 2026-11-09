@@ -172,6 +172,23 @@ function runChecks(options = {}) {
       fail("Account", "bot-account.username is empty");
     }
 
+    // Hosts' acceptable-use policies call repeating chat "spam" — SillyDev's
+    // terms list "excessive spamming of any kind, including chat messages" as a
+    // suspendable offence, and Minecraft servers ban for it too.
+    const chat = (config.utils && config.utils["chat-messages"]) || {};
+    const repeatEvery = Number(chat["repeat-delay"]) || 120; // seconds in settings.json
+    if (chat.enabled === true && chat.repeat === true) {
+      warn(
+        "Chat automation",
+        `repeating ${(chat.messages || []).length} message(s) every ${repeatEvery}s — ` +
+          "hosts and Minecraft servers call this spam; set utils.\"chat-messages\".enabled to false",
+      );
+    } else if (chat.enabled === true) {
+      ok("Chat automation", "enabled, not repeating");
+    } else {
+      ok("Chat automation", "off (no automated chat)");
+    }
+
     const watchdog = (config.utils && config.utils.watchdog) || {};
     ok(
       "Watchdog",
