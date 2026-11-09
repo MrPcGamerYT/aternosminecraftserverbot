@@ -351,6 +351,33 @@ its console. Free container, no card.
    in a loop, that was the liveness bug fixed in `0b31854` — make sure
    `index.js` is the current one from `main`.
 
+### The public dashboard URL (SillyDev gives you one)
+
+SillyDev's own FAQ: *"Your server gets a public address and port, shown in your
+panel. Have your app listen on `0.0.0.0` and the port in the `SERVER_PORT`
+environment variable, and it is reachable over plain HTTP straight away."*
+
+That is exactly what this bot does, so:
+
+1. Panel → **Network** tab → copy the address next to your allocation,
+   e.g. `123.45.67.89:6219` or `node-08.sillydev.co.uk:6219`.
+2. Open `http://<that address>` in a browser. That is the dashboard: status card,
+   logs, Start/Stop/Restart, `/command`, tutorial.
+3. **It is plain HTTP and it is public** — no domain, no certificate. Anyone with
+   the URL can stop the bot or type into your Minecraft session, so protect it:
+
+   ```
+   DASHBOARD_PASSWORD=pick-a-long-password
+   DASHBOARD_USER=admin
+   ```
+
+   Environment tab, then restart. The browser asks for the password; `/health`
+   and `/ping` stay open so the panel's own checks keep working.
+
+4. Want **HTTPS** and a real domain? Run Cloudflare Tunnel next to the app
+   (SillyDev suggests the same thing) or put a reverse proxy in front, and point
+   the domain at port `SERVER_PORT`.
+
 ### Wiring the panel to a Vercel dashboard
 
 The bot listens on the panel's assigned port (e.g. `6158`). For the vercel.app
@@ -438,6 +465,138 @@ No spin-down, no cold start, no suspension for staying awake, and the dashboard
 is yours.
 
 ---
+
+## 9. More hosts, one table
+
+Everything below runs this repo unchanged (`PORT` or `SERVER_PORT`, one process,
+`npm start`). "Public URL" means the dashboard is reachable from a browser
+without a tunnel.
+
+| Host | Free? | Card? | Public URL | RAM | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| **SillyDev** | yes, no expiry | no | **yes** — `IP:PORT`, plain HTTP | 256 MB | what you are on now; add `DASHBOARD_PASSWORD` |
+| **alwaysdata** | yes, personal use | no | **yes** — HTTPS + `you.alwaysdata.net` | 256 MB / 1 GB disk | the only free host here with **HTTPS included**; Node site + this bot's web server fits |
+| **Botkeep** | yes | no | yes, via Domains | 512 MB | best free RAM, but capacity is a queue |
+| **Waifly** | yes | no | yes (`IP:PORT`) | 300 MB | no renewal clicks; suspended if offline 3 days |
+| **HeavenCloud** | yes | no | yes (`IP:PORT`) | 512 MB | weekly renewal click |
+| **FreeGameHost** | yes | no | yes (`IP:PORT`) | 256 MB | renewal every 12 h — worst upkeep |
+| **Oracle Cloud** | always free | yes (₹0) | **yes** — real IP, HTTPS with Caddy | 24 GB | the "no limits" answer; signup sometimes refuses |
+| **Northflank Sandbox** | yes | **yes, required** | yes, HTTPS | 512 MB+ | always-on and well run — needs a payment method on file |
+| **Koyeb** | yes | card hold $29 | yes, HTTPS | 512 MB | scales to zero after 1 h idle — the Render trap again |
+| **Zeabur** | $5/mo credit | no | yes, HTTPS | 512 MB | auto-sleeps when idle; credit runs out |
+| **Railway** | $5 trial, then $1/mo credit | no for trial | yes, HTTPS | 512 MB | fine to test, not a 24/7 home |
+| **Hetzner / RackNerd / VisiHost** | no | yes | yes | 2–4 GB | €3.79/mo, ~$11/year, or ₹99 — no queues, no rules |
+
+### alwaysdata, in short
+
+Free, no card, real HTTPS on a real domain — the one free option that fixes the
+"plain HTTP, no certificate" awkwardness of a panel:
+
+1. Sign up at `alwaysdata.com` (no card, personal use).
+2. **Web → Sites → Add a site** → type **Node.js**, working directory the repo,
+   command `node index.js`.
+3. Upload the project (SSH/SFTP is included on the free plan), run
+   `npm ci --omit=dev`.
+4. Set `DASHBOARD_PASSWORD` and `NODE_OPTIONS=--max-old-space-size=192` in
+   **Advanced → Environment**.
+5. The site answers on `https://<account>.alwaysdata.net`.
+
+`alwaysdata` assigns the port through the `PORT` variable, which this app already
+reads — no extra configuration.
+
+## 10. Even more hosts
+
+### 512 MB free panels (the useful class)
+
+This bot needs roughly 150 MB to run; 100 MB panels cannot hold it, so anything
+under 256 MB is not worth trying.
+
+| Host | Free RAM | CPU | Renewal | Notes |
+| --- | --- | --- | --- | --- |
+| **Lunafy** (`lunafy.run`) | **512 MB** | 0.5 vCPU | every 7 days, one click | best published free specs in this class |
+| **HeavenCloud** (`heavencloud.in`) | **512 MB** | 25% | every 7 days | 712 MB disk, Miami/Houston/Falkenstein |
+| **Daki** (`daki.cc`) | 512 MB | 50% | runtime extended by watching ads | no card |
+| **Bot-Hosting.net** | 256 MB | 25% | every 4 days | 512 MB disk |
+| **VisiHost / NexCloud** (India) | 256 MB | shared | varies | Hindi support, nearest region |
+| **FreeGameHost** | 256 MB | 25% | every 12 h | worst upkeep of the list |
+| ~~Pella~~ | 100 MB | 0.1 | — | **too small** — mineflayer will be OOM-killed |
+
+All of them are Pterodactyl, so the steps in section 2 apply unchanged.
+
+### Free VMs on the big clouds (card needed, but no sleep and no queue)
+
+| Provider | Always-free shape | Card | Catch |
+| --- | --- | --- | --- |
+| **Oracle Cloud** | 4 ARM cores / 24 GB (Ampere A1) | yes, ₹0 charged | capacity can be full; signup sometimes refused |
+| **Google Cloud** | `e2-micro`, 1 vCPU / 1 GB, 30 GB disk in `us-central1` / `us-west1` / `us-east1` | yes | one VM per month, US regions only, check current terms |
+| **Azure** | `B1s`, 750 h/month for 12 months | yes | 12 months, not forever |
+| **AWS** | `t3.micro` / `t4g.micro`, 750 h/month for 12 months | yes | 12 months, not forever |
+
+Deploy on any of them with `sudo bash deploy/vm-install.sh` or
+`sudo docker compose up -d --build` (section 3).
+
+### Cheap paid, zero rules
+
+| Provider | Price | What you get |
+| --- | --- | --- |
+| **SillyDev paid** | 75p/month | doubles the free allocation (512 MB) — same panel you already know |
+| **Botkeep Plus** | €1.99/month | 3 GB RAM, 5 slots, no queue |
+| **Hetzner** | €3.79/month | 2 GB / 1 vCPU, EU, real root |
+| **RackNerd** | ~$11/year | 1 GB, US, the cheapest usable VPS |
+| **VisiHost** (India) | ₹39–99/month | Mumbai/Noida nodes |
+
+For a bot that must stay online, one of these removes every free-tier problem at
+once: no queue, no spin-down, no renewal clicks, no ad watching, no suspension.
+
+## 11. Suspensions: what actually gets this bot banned
+
+Read this before you appeal anywhere, because the reason is usually visible in
+your own configuration.
+
+### SillyDev allows this bot. Really.
+
+From their site: *"None of this is about ordinary bots. An AFK client, a chat
+bridge or a helper bot on a server you are allowed to be on is exactly what this
+page is for."* — [`sillydev.co.uk/minecraft-bot-hosting`](https://sillydev.co.uk/minecraft-bot-hosting).
+Their ban list is DDoS tools, stressers, packet flooders, crash exploits and
+"bot swarms that flood a server with fake players", plus, from the terms:
+*"excessive spamming of any kind, including but not limited to chat messages,
+commands, or connection requests"* and *"operating automated connections in a
+manner that places undue strain on the Service or on third-party servers."*
+
+So a silent AFK client is fine. Three things in a *default* copy of this repo
+look like the banned list:
+
+| What in the config | How a host reads it | Fix |
+| --- | --- | --- |
+| `utils."chat-messages"` with `repeat: true` — five messages every 120 s, including "I will Ban You!" | chat spam; also a fast way to get banned by the Minecraft server | `"enabled": false` (presets in `settings.json`) |
+| A reconnect loop (the old 90 s watchdog bug, `probe-not-ready` storms) | "undue strain … on third-party servers" | update `index.js`; verified fixed in `0b31854` |
+| Two servers, or a second account after a suspension | ban evasion — the account is terminated and so is the replacement | one account, one server |
+
+`npm run doctor` now warns about the first one:
+`[warn] Chat automation: repeating 5 message(s) every 120s — hosts and Minecraft
+servers call this spam`.
+
+### Your Minecraft server can suspend you too
+
+This bot connects to **Aternos**. Aternos' rules do not allow AFK bots or
+auto-reconnect clients, and they can suspend the *Aternos server* independently
+of any hosting provider. That risk exists on every host. If the server is yours,
+run Paper locally or on a VPS and allow it there; if it is someone else's, ask
+first.
+
+### How to appeal, without making it worse
+
+1. **Do not create a new account.** Both SillyDev and most panels terminate the
+   replacement account for ban evasion — that is how people lose three accounts in
+   a week (Render, earlier in this file, is the same story).
+2. Ask in their Discord (`discord.gg/Ec4csXrps8`) — SillyDev says support happens
+   there, not by email. Ask for the specific policy paragraph.
+3. Before asking, fix the three rows above, so the answer is "it is fixed" rather
+   than "it was not me".
+4. If the bot itself is what they object to, move to a host where a 24/7 client is
+   unambiguously the product: a VM (section 3), Termux (section 4), or a paid VPS
+   (section 5).
 
 ## What not to do on the next host
 
