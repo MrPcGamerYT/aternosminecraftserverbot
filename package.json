@@ -9,7 +9,9 @@
   },
   "scripts": {
     "start": "node index.js",
-    "test": "node --check index.js && node --check probe.js && node --check watcher.js && node --check provider.js && node --check leaveRejoin.js && node --check logger.js",
+    "repair": "rm -rf node_modules && npm ci --omit=dev || npm install --omit=dev",
+    "doctor": "node doctor.js",
+    "test": "node --check doctor.js && node --check index.js && node --check probe.js && node --check watcher.js && node --check provider.js && node --check leaveRejoin.js && node --check logger.js",
     "test:lifecycle": "node tests/test-lifecycle.js",
     "test:duplicate-instance": "node tests/test-duplicate-instance.js",
     "test:mirror": "node tests/test-mirror.js",
@@ -20,7 +22,8 @@
     "test:serverless": "VERCEL=1 node tests/test-serverless.js",
     "test:single-host": "node tests/test-single-host.js",
     "test:liveness": "node tests/test-liveness.js",
-    "test:all": "npm run test && npm run test:lifecycle && npm run test:duplicate-instance && npm run test:mirror && npm run test:watcher-policy && npm run test:provider && npm run test:proxy && npm run test:keepalive && npm run test:serverless && npm run test:single-host && npm run test:liveness"
+    "test:doctor": "node tests/test-doctor.js",
+    "test:all": "npm run test && npm run test:lifecycle && npm run test:duplicate-instance && npm run test:mirror && npm run test:watcher-policy && npm run test:provider && npm run test:proxy && npm run test:keepalive && npm run test:serverless && npm run test:single-host && npm run test:liveness && npm run test:doctor"
   },
   "keywords": [
     "minecraft",

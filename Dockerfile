@@ -30,7 +30,7 @@ RUN apk add --no-cache tini
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
-COPY index.js logger.js probe.js watcher.js provider.js leaveRejoin.js settings.json ./
+COPY index.js logger.js probe.js watcher.js provider.js leaveRejoin.js doctor.js settings.json ./
 COPY launcher_accounts.json ./
 
 # Run as the unprivileged user that ships with the node image.
