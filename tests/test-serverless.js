@@ -245,4 +245,119 @@ test("12. every route the dashboard links to resolves inside the function", asyn
   }
 });
 
+// ------------------------------------------------------------
+// Resilience: the deployed function must never 500 again
+//
+// Commit a289ff6 removed the serverless exports from index.js while
+// api/index.js still imported them, and the live site answered
+// FUNCTION_INVOCATION_FAILED on every request. These tests pin the
+// degraded paths so that class of breakage can't reach production.
+// ------------------------------------------------------------
+
+const os = require("os");
+
+function makeSandbox(indexSource) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "afk-serverless-"));
+  fs.mkdirSync(path.join(dir, "api"), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, "api", "index.js"), path.join(dir, "api", "index.js"));
+  fs.copyFileSync(path.join(ROOT, "package.json"), path.join(dir, "package.json"));
+  if (indexSource !== null) fs.writeFileSync(path.join(dir, "index.js"), indexSource);
+  // Reuse the real dependencies so only the code path under test differs.
+  fs.symlinkSync(path.join(ROOT, "node_modules"), path.join(dir, "node_modules"), "dir");
+  return dir;
+}
+
+function loadFrom(dir, env = {}) {
+  const saved = { ...process.env };
+  Object.assign(process.env, { VERCEL: "1", ...env });
+  for (const key of Object.keys(require.cache)) {
+    if (key.startsWith(dir)) delete require.cache[key];
+  }
+  try {
+    return require(path.join(dir, "api", "index.js"));
+  } finally {
+    process.env = saved;
+  }
+}
+
+test("13. a stripped index.js still serves a readable page, never a 500", async () => {
+  // Exactly the shape of commit a289ff6: index.js without the serverless API.
+  const dir = makeSandbox(
+    '"use strict";\nmodule.exports = { VERSION: "2.11.0-crippled", runtime: {} };\n',
+  );
+  const handler = loadFrom(dir);
+  const local = await serve(handler);
+  try {
+    const home = await get(local.base + "/");
+    assert.equal(home.statusCode, 200, "no FUNCTION_INVOCATION_FAILED");
+    assert.match(home.body, /Dashboard unavailable|cannot hold a Minecraft/i);
+
+    const health = await get(local.base + "/health");
+    assert.equal(health.statusCode, 200);
+    const body = JSON.parse(health.body);
+    assert.equal(body.mode, "serverless");
+    assert.match(body.error, /does not export a serverless handler/);
+    assert.match(body.hint, /BOT_BACKEND_URL/);
+  } finally {
+    await local.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("14. a module that throws on load degrades to an explanation, not a 500", async () => {
+  const dir = makeSandbox('"use strict";\nthrow new Error("Cannot find module \'mineflayer\'");\n');
+  const handler = loadFrom(dir);
+  const local = await serve(handler);
+  try {
+    const res = await get(local.base + "/health");
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /failed to load: Cannot find module 'mineflayer'/);
+    assert.equal(body.ok, false);
+    assert.ok(body.version, "still reports a version so the deploy is identifiable");
+  } finally {
+    await local.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("15. with a backend configured, a broken index.js still shows the live bot", async () => {
+  const backend = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ realBot: true, path: req.url }));
+  });
+  await new Promise((resolve) => backend.listen(0, "127.0.0.1", resolve));
+  const backendUrl = `http://127.0.0.1:${backend.address().port}`;
+
+  const dir = makeSandbox('"use strict";\nthrow new Error("boom");\n');
+  const handler = loadFrom(dir, { BOT_BACKEND_URL: backendUrl });
+  const local = await serve(handler);
+
+  try {
+    const res = await get(local.base + "/status/light");
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.realBot, true, "the live dashboard stays reachable through any failure");
+    assert.equal(body.path, "/status/light");
+  } finally {
+    await local.close();
+    await new Promise((resolve) => backend.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("16. api/index.js never imports a name index.js does not export", () => {
+  const index = require(path.join(ROOT, "index.js"));
+  const source = fs.readFileSync(path.join(ROOT, "api", "index.js"), "utf8");
+  const destructured = [...source.matchAll(/const\s*\{([^}]+)\}\s*=\s*require\("\.\.\/index\.js"\)/g)]
+    .flatMap((m) => m[1].split(",").map((n) => n.trim()).filter(Boolean));
+  for (const name of destructured) {
+    assert.equal(
+      typeof index[name],
+      "function",
+      `api/index.js imports ${name}, which index.js no longer exports — the deployment would 500`,
+    );
+  }
+});
+
 run("serverless");
