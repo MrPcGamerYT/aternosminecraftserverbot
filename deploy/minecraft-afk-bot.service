@@ -1,0 +1,44 @@
+[Unit]
+Description=Minecraft AFK bot (dashboard + bot in one process)
+Documentation=https://github.com/MrPcGamerYT/aternosminecraftserverbot
+# The bot needs the network to reach the Minecraft server; it does not need
+# anything else, so it can start as soon as the machine is online.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=afkbot
+Group=afkbot
+WorkingDirectory=/opt/minecraft-afk-bot
+
+Environment=NODE_ENV=production
+Environment=PORT=5000
+# 512 MB machine? Keep V8 below the limit so a leak is a clean Node error
+# instead of the kernel OOM killer.
+Environment=NODE_OPTIONS=--max-old-space-size=384
+# Optional: only needed if the host sits behind something that idles out.
+# Environment=PUBLIC_URL=https://afk.example.com
+
+ExecStart=/usr/bin/node index.js
+
+# 24/7 behaviour: restart on crash, on reboot, on OOM kill — forever.
+Restart=always
+RestartSec=5
+
+# index.js handles SIGTERM: quits the game, stops the timers, releases the
+# lease. Give it time to finish instead of SIGKILLing mid-session.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Log enough to debug a disconnect, not so much that a 20 GB disk fills.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=afk-bot
+
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target
