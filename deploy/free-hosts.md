@@ -44,6 +44,19 @@ no credit card, no renewal timer, no idle sleep. That is the closest thing to
 "Render free without the spin-down" — you are not breaking any rule by leaving
 the bot online, because staying online is the plan.
 
+### 1.0 Which profile do I pick?
+
+The creation form asks what you are deploying. Only one answer runs this bot:
+
+| Profile in the wizard | Pick it? | Why |
+| --- | --- | --- |
+| **Application / Bot** (Node.js) | **yes** | runs one long-lived Node process — that is exactly what this bot is |
+| **Website** (static HTML/CSS/JS) | no | a static site has no Node process, no Minecraft socket, nothing that can stay connected |
+| **Database** (MySQL / PostgreSQL / Redis) | no | the bot stores nothing in a database, and it would spend your only free slot |
+| **Service** (Lavalink, Uptime Kuma) | no | those are prebuilt apps, not your code |
+
+So: **Application / Bot → Node.js**. Everything below assumes that choice.
+
 ### 1.1 Create the account
 
 1. Open `https://botkeep.cloud/register`.
@@ -70,30 +83,48 @@ Check before uploading: opening `afk-bot.zip` must show `package.json`,
 `index.js`, `settings.json`, `probe.js`, `watcher.js`, `provider.js`,
 `leaveRejoin.js`, `logger.js` — and no `node_modules`.
 
-> Prefer GitHub? In the creation form choose **GitHub**, connect the Botkeep
-> GitHub App, pick the repo and `main`. Branch deployments are a revision, not a
-> live sync, so press deploy after each push.
+> Prefer not to zip anything? **GitHub works too** — see 1.3.
 
-### 1.3 Create the server
+### 1.3 Connect the repo directly (GitHub) or upload the ZIP
 
-In the panel: **Create / New server** → runtime **Node.js** → version **Node 22**
-(this repo supports `>=20 <23`; 24 is outside the range, so don't pick it) →
-source **ZIP** (upload `afk-bot.zip`) or **GitHub**.
+**Yes, a direct repo connection works.** In the creation form choose **GitHub**,
+install the Botkeep GitHub App for this one repository, then pick:
 
-Set the resources: the free pool is a total of 512 MB / 50% CPU / 1 GB, and one
-server may take all of it — give this one **512 MB, 50% CPU, ~1 GB**.
+| Field | Value |
+| --- | --- |
+| Repository | `MrPcGamerYT/aternosminecraftserverbot` |
+| Branch | `main` |
+| Project root | `/` (the repo root — `package.json` is there, no subfolder) |
+| Runtime | **Node.js 22** (this repo supports `>=20 <23`; 24 is outside the range) |
+| Start command | `npm start` |
+| Resources | 512 MB RAM, 50% CPU, ~1 GB — the whole free pool |
 
-Start command, exactly:
+Three things about a GitHub connection on a panel host:
+
+1. **A deploy is a revision, not live sync.** After `git push` nothing changes on
+   the host until you open the panel and deploy/apply the new revision. (Botkeep
+   can do pull-on-start and push updates, but only if you explicitly enable them.)
+2. **A redeploy resets files you edited in the panel.** If you fix the server IP
+   in the **Files** tab, the next GitHub deploy overwrites it with the repo
+   version. So either set the target in `settings.json` in the repo and push, or
+   use the environment variables in 1.5 — those survive redeploys.
+3. **`node_modules` must stay out of the repo** (this one is already in
+   `.gitignore`); the build installs from `package-lock.json`.
+
+ZIP instead? See 1.2 — the only trap there is the outer folder.
+
+### 1.4 Start command and resources
 
 ```
 npm start
 ```
 
-(`package.json` maps that to `node index.js`. Botkeep runs `npm` from the
-lockfile, so dependencies install on the build step — you do not run
-`npm install` yourself.)
+(`package.json` maps that to `node index.js`. Botkeep installs from the lockfile
+on the build step, so you never run `npm install` by hand.)
 
-### 1.4 Environment variables
+Give the one server the whole free pool: **512 MB RAM, 50% CPU, ~1 GB**.
+
+### 1.5 Environment variables
 
 In the server's **Environment / Secrets** tab add one variable:
 
@@ -120,7 +151,21 @@ MC_USERNAME=OfflinePlayer
 **Do not set `PUBLIC_URL` or `SELF_PING_INTERVAL_MS`.** Nothing spins down here,
 and the self-ping is exactly what got the Render accounts banned.
 
-### 1.5 Start it
+### 1.5b Node version on a panel: pick 20 or 22, never 24/25
+
+Panel eggs often default to the newest Node they have (SillyDev ships Node 25).
+This repo declares `engines: ">=20 <23"` and mineflayer is untested above 22 —
+you will see `npm warn EBADENGINE` and, on some hosts, a connect/reconnect loop
+that looks like a network problem.
+
+* Pterodactyl: **Startup** tab → look for a Node version variable (`NODE_VERSION`,
+  `NODE_JS_VERSION`) or a "Node.js 22" egg. Restart after changing it.
+* Botkeep: pick **Node.js 22** in the creation form.
+* Can't change it? Ask support for Node 22. A last resort is a local binary:
+  `npm install node@22 --no-save` then set the startup command to
+  `./node_modules/.bin/node index.js` (costs ~50 MB of your disk).
+
+### 1.6 Start it
 
 1. Press **Start** and open the **Console** tab.
 2. You should see, in order:
@@ -136,7 +181,7 @@ and the self-ping is exactly what got the Render accounts banned.
    own panel; the bot joins by itself when the port answers (probes every few
    seconds, forced login after 6).
 
-### 1.6 The dashboard
+### 1.7 The dashboard
 
 Botkeep runs the process on a random port and can route a domain to it:
 
@@ -147,7 +192,31 @@ Botkeep runs the process on a random port and can route a domain to it:
 * If the port does not answer from outside, the **Console** is your dashboard:
   same log lines, same reconnect messages, same Start/Stop in the panel.
 
-### 1.7 Updating the bot
+### 1.8 "No server capacity is available at the moment"
+
+That message comes from Botkeep, not from this repo — their **free tier is
+oversubscribed**, so the creation call is refused when no node has a free slot.
+Your account is fine and nothing was created; there is nothing to undo.
+
+What actually helps:
+
+* **Retry later.** Free capacity frees up when other people delete servers, so
+  the same click works a few hours later. Off-peak (European night, ~22:00–04:00
+  UTC) is the best window.
+* **Retry with a smaller allocation** if the form lets you choose: 384 MB instead
+  of 512 MB fits in tighter gaps, and this bot runs comfortably in 256–384 MB.
+* **Check [`status.botkeep.cloud`](https://status.botkeep.cloud/) → "Server
+  creation".** If that probe says unavailable, waiting is the only option; if it
+  says available while you still get refused, it is free-plan capacity.
+* **Do not create a second account** to "get a slot" — that is the ban-evasion
+  pattern that already cost three Render accounts.
+
+If it keeps failing, the sections below are the queue-free alternatives: Oracle
+Always Free (a real VM) and an old phone on Termux (no capacity to run out of).
+The other panels in section 2 have the *same* capacity lottery, just a different
+queue.
+
+### 1.9 Updating the bot
 
 Edit `settings.json` directly in the panel's **Files** tab (server IP, port,
 username), or re-upload a new ZIP as a new revision. Keep your own copy of the
@@ -155,11 +224,25 @@ project — a hosting backup is not source control.
 
 ---
 
-## 2. Other bot panels (Pterodactyl-based)
+## 2. Other free bot panels (Pterodactyl-based)
 
-HeavenCloud (512 MB), SillyDev (256 MB), Waifly (300 MB), VisiHost/NexCloud
-(India, 256 MB). These are Pterodactyl, so there is no build step — you run
-npm yourself:
+When Botkeep says "no server capacity", the next stop is another free panel.
+They all run the same Pterodactyl software, so the steps are identical — only
+the signup flow and the renewal rule differ.
+
+| Panel | Free RAM | Signup | Renewal | Note |
+| --- | --- | --- | --- | --- |
+| **HeavenCloud** (`heavencloud.in`) | 512 MB | Discord | click every 7 days | closest to Botkeep's free spec |
+| **Waifly** (`waifly.com`) | 300 MB | email | none | suspended only if the server stays offline 3 days |
+| **SillyDev** (`sillydev.co.uk`) | 256 MB | email | none | small, but enough for this bot |
+| **FreeGameHost** (`freegamehost.xyz`) | 256 MB | email | click every 12 h (max 48 h) | Node.js egg, SFTP + console |
+| **VisiHost / NexCloud** (India) | 256 MB | email / Discord | varies | nearest to you, Hindi support |
+
+All of them are free, no card, and none of them sleeps an idle process — that is
+the point of a bot panel. The capacity is small, so 256 MB panels need
+`NODE_OPTIONS=--max-old-space-size=192`.
+
+Steps (same on every one of them):
 
 1. Sign up (email / Discord, no card).
 2. Create a server → **Node.js** egg, **Node 22**.
@@ -169,12 +252,18 @@ npm yourself:
    npm ci --omit=dev || npm install --omit=dev
    ```
 4. Startup file `index.js`, startup command `node index.js`.
-5. Environment: `NODE_OPTIONS=--max-old-space-size=384` (or `192` on a 256 MB panel).
+5. Environment: `NODE_OPTIONS=--max-old-space-size=384` (or `192` on a 256 MB
+   panel).
 6. Start, and watch the console.
 
 These panels give no public URL at all, so the console is your dashboard. If a
 256 MB panel gets OOM-killed while `minecraft-data` loads 1.21, that is the
-panel's RAM, not the bot — use Botkeep (512 MB) instead.
+panel's RAM, not the bot — move to a 512 MB panel or a VM.
+
+**Northflank and Leapcell are not answers here**, even though they look free:
+Northflank requires a payment method on every plan to create resources, and
+Leapcell's free tier is serverless invocations with no persistent server — a
+Minecraft session needs a process that stays alive.
 
 ---
 

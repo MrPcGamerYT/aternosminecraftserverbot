@@ -11,7 +11,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 ```
 npm install
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 139 tests, no framework, no network
+npm run test:all   # 145 tests, no framework, no network
 ```
 
 ---
@@ -587,7 +587,7 @@ online is normal.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 9 suites (139 tests)
+npm run test:all          # syntax + all 10 suites (145 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -599,6 +599,7 @@ npm run test:all          # syntax + all 9 suites (139 tests)
 | `test-provider.js` | 21 | Status map 0–10, token exclusivity, base URL scheme, start/stop/restart paths, error surfacing, token scrubbing, endpoint wiring. |
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
+| `test-liveness.js` | 6 | What counts as "the server is still talking": parsed packets alone keep a session alive (the panel-host 90s loop), raw bytes and chat still count, genuine silence still reconnects, detach removes every listener, and a bot with no `_client` never throws. |
 | `test-single-host.js` | 19 | The one-host promise, enforced: `render.yaml` has exactly **one** service, stays on `plan: free`, runs one instance of `node index.js`, keeps `BOT_BACKEND_URL` empty, caps the V8 heap under 512 MB, self-pings faster than Render's 15-min spin-down and health-checks `/health`; `Procfile`/`nixpacks`/`Dockerfile` agree on the port and the endpoint; `docker-compose.yml` and the systemd unit restart forever; the Termux script takes a wake-lock; `SERVER_PORT` is read so a panel host's assigned port is bound; `deploy/free-hosts.md` covers every free option and warns about multi-accounting; the serverless entry never claims to start a bot. |
 | `test-serverless.js` | 21 | The Vercel/Lambda entry: callable export, warning-free `vercel.json` + bounded `engines`, static-output hygiene, routing, no bot started, every page 200, honest banner, warm-handler reuse, POST bodies, proxying, 502 on a dead backend, plus the degraded paths (stripped `index.js`, module that throws, backend still reachable) and an import/export consistency check. |
 
@@ -633,6 +634,19 @@ supported) or a paid plan — not automation of the free queue.
 The port is not answering yet. Aternos' proxy opens it before the world is ready,
 which shows up as `port open, no status reply (server still booting)`. After six
 probes the bot forces a login, so just leave it running.
+
+**`[Watchdog] Socket silent for ~92s` in a loop, right after spawn**
+The session is fine, the silence detector was blind. Fixed: liveness now comes
+from every parsed packet as well as raw socket bytes, so a host where mineflayer
+never emits `socket` no longer looks dead. If you still see it on an older
+commit or a panel that genuinely drops the connection:
+
+* the log line now ends with `(tcp: open, phase: connected)` — `tcp: open` with
+  keepalives arriving means the detector, `tcp: closed` means the network;
+* run **Node 20–22**, not 23+: `engines` is `>=20 <23`, and some panels default
+  to Node 25, where mineflayer is untested and `npm warn EBADENGINE` warns you;
+* raise `utils.watchdog.silence-timeout` in `settings.json` (e.g. `180000`) if
+  the Minecraft server itself is quiet during long night-time lulls.
 
 **"Another instance is running this username"**
 A lease exists in `/tmp` (or `BOT_LEASE_DIR`). It clears itself 60s after the other

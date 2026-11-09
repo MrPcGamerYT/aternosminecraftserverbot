@@ -1464,7 +1464,10 @@ function connectBot() {
       scheduleReconnect("watchdog-spawn-timeout");
     },
     onSilence: (info) => {
-      addLog(`[Watchdog] Reconnecting after ${formatMs(info.silentMs)} of socket silence`);
+      addLog(
+        `[Watchdog] Reconnecting after ${formatMs(info.silentMs)} of socket silence ` +
+          `(tcp: ${socketStateOf(runtime.bot)}, phase: ${runtime.phase})`,
+      );
       runtime.lastDisconnectReason = "socket silence";
       destroyBot("silence-timeout");
       scheduleReconnect("watchdog-silence");
@@ -1526,19 +1529,91 @@ function connectBot() {
   wireBotEvents(bot);
 }
 
+/**
+ * Feed every "the server is still talking to us" signal into a watchdog.
+ *
+ * The raw socket is the most direct one, but it is not the only one and it is
+ * not reliable across versions: mineflayer does not promise that `socket` is
+ * emitted before the bot starts reading, and on some runtimes the event never
+ * reaches us at all. When that happened the watchdog saw *no traffic* on a
+ * perfectly healthy session and reconnected every 90s — the "socket silent for
+ * 92s" loop.
+ *
+ * So: raw bytes, plus every parsed packet off `bot._client`, plus chat. Any one
+ * of them arriving is proof the connection is alive.
+ *
+ * @returns {function} detach every listener it attached
+ */
+function attachLivenessSources(bot, wd) {
+  const note = () => {
+    if (wd) wd.noteData();
+  };
+  const detach = [];
+
+  if (!bot) return () => {};
+
+  // 1. raw bytes (cheapest, and the earliest possible signal)
+  try {
+    bot.on("socket", (socket) => {
+      try {
+        socket.on("data", note);
+        detach.push(() => socket.removeListener("data", note));
+      } catch (_err) {
+        /* ignore */
+      }
+    });
+  } catch (_err) {
+    /* ignore */
+  }
+
+  // 2. parsed packets — fires for every inbound packet, keepalives included,
+  //    and does not depend on when `socket` is emitted.
+  try {
+    const client = bot._client;
+    if (client && typeof client.on === "function") {
+      client.on("packet", note);
+      detach.push(() => client.removeListener("packet", note));
+    }
+  } catch (_err) {
+    /* ignore */
+  }
+
+  // 3. chat / system messages
+  try {
+    bot.on("messagestr", note);
+    detach.push(() => bot.removeListener("messagestr", note));
+  } catch (_err) {
+    /* ignore */
+  }
+
+  return () => {
+    for (const fn of detach) {
+      try {
+        fn();
+      } catch (_err) {
+        /* ignore */
+      }
+    }
+  };
+}
+
+/** Socket state for the log line, so a silence report says more than "silent". */
+function socketStateOf(bot) {
+  try {
+    const socket = bot && bot._client && bot._client.socket;
+    return socket && socket.readyState ? String(socket.readyState) : "none";
+  } catch (_err) {
+    return "unknown";
+  }
+}
+
 function wireBotEvents(bot) {
   const note = () => {
     if (watchdog) watchdog.noteData();
     if (watchdog) watchdog.noteMovement();
   };
 
-  bot.on("socket", (socket) => {
-    try {
-      socket.on("data", () => watchdog && watchdog.noteData());
-    } catch (_err) {
-      /* ignore */
-    }
-  });
+  attachLivenessSources(bot, watchdog);
 
   bot.on("spawn", () => {
     if (bot !== runtime.bot || runtime.spawnHandled) return;
@@ -3469,6 +3544,8 @@ const exported = {
   releaseLeaseOnExit,
   startHttpServer,
   resolveHttpPort,
+  attachLivenessSources,
+  socketStateOf,
   provider,
   addLog,
   getLogs,
