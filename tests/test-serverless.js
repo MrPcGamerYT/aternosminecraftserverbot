@@ -65,6 +65,8 @@ test("2. vercel.json routes everything into that function", () => {
   assert.equal(config.framework, null);
   assert.ok(config.functions["api/index.js"], "the function is declared with a time budget");
   assert.ok(config.functions["api/index.js"].maxDuration > 0);
+  // Only public/ is published as static output, so source files have no URL.
+  assert.equal(config.outputDirectory, "public");
 });
 
 test("2b. vercel.json contains nothing Vercel warns about", () => {
@@ -382,6 +384,52 @@ test("16. api/index.js never imports a name index.js does not export", () => {
       `api/index.js imports ${name}, which index.js no longer exports — the deployment would 500`,
     );
   }
+});
+
+// ------------------------------------------------------------
+// Static-deployment safety
+//
+// aternosminecraftserverbot.vercel.app was a *static* project: with no
+// function and no index.html, "/" resolved to index.js and the whole
+// source was served as text. These tests make sure the repo can never
+// present itself that way again.
+// ------------------------------------------------------------
+
+test("17. a static deployment shows a page, never source code", async () => {
+  const html = fs.readFileSync(path.join(ROOT, "public", "index.html"), "utf8");
+  assert.ok(html.includes("/status/light"), "it must try the live API first");
+  assert.match(html, /static|serverless/i, "and explain itself when there is none");
+  assert.match(html, /BOT_BACKEND_URL/);
+  // Self-contained: no build step, no CDN, no missing assets in a bare deploy.
+  assert.ok(!/<script[^>]+src=/i.test(html), "no external scripts");
+  assert.ok(!/<link[^>]+href="http/i.test(html), "no external stylesheets");
+  // It must never look like a JS file.
+  assert.ok(!/^\s*("use strict"|const |function \w+\()/.test(html));
+});
+
+test("18. nothing at the web root can serve a source file", () => {
+  const config = JSON.parse(fs.readFileSync(path.join(ROOT, "vercel.json"), "utf8"));
+
+  // The static output directory must exist and contain ONLY the shell page.
+  // Everything else in the repo (index.js, settings.json, ...) then has no URL
+  // at all -- this is what stops the old "raw index.js at /" behaviour.
+  assert.equal(config.outputDirectory, "public");
+  const published = fs.readdirSync(path.join(ROOT, "public"));
+  assert.deepEqual(published, ["index.html"], `public/ must stay a single page, found ${published.join(", ")}`);
+
+  // No source file or config may live there.
+  const forbidden = ["index.js", "settings.json", "package.json", "api", "tests", "node_modules", ".env"];
+  for (const name of forbidden) {
+    assert.ok(
+      !published.includes(name),
+      `public/${name} would be downloadable by anyone`,
+    );
+  }
+
+  // And the function stays declared: a static-only project has no rewrite at
+  // all, which is exactly how the old deployment broke.
+  assert.ok(config.functions["api/index.js"], "the function must be declared");
+  assert.equal(config.framework, null, "framework:null keeps Vercel from guessing a static build");
 });
 
 run("serverless");
