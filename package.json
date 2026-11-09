@@ -18,7 +18,8 @@
     "test:proxy": "node tests/test-proxy.js",
     "test:keepalive": "node tests/test-keepalive.js",
     "test:serverless": "VERCEL=1 node tests/test-serverless.js",
-    "test:all": "npm run test && npm run test:lifecycle && npm run test:duplicate-instance && npm run test:mirror && npm run test:watcher-policy && npm run test:provider && npm run test:proxy && npm run test:keepalive && npm run test:serverless"
+    "test:single-host": "node tests/test-single-host.js",
+    "test:all": "npm run test && npm run test:lifecycle && npm run test:duplicate-instance && npm run test:mirror && npm run test:watcher-policy && npm run test:provider && npm run test:proxy && npm run test:keepalive && npm run test:serverless && npm run test:single-host"
   },
   "keywords": [
     "minecraft",
