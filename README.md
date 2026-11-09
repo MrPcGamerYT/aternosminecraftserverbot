@@ -11,7 +11,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 ```
 npm install
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 137 tests, no framework, no network
+npm run test:all   # 139 tests, no framework, no network
 ```
 
 ---
@@ -405,7 +405,7 @@ so a partial `settings.json` still boots.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `PORT` | `5000` | HTTP port (binds `0.0.0.0`). |
+| `PORT` | `5000` | HTTP port (binds `0.0.0.0`). Panel hosts that assign one, like Botkeep, pass it as `SERVER_PORT` and that is read automatically. |
 | `MC_SERVER_HOST` / `MC_SERVER_PORT` | settings | Server target (`host:port` also accepted). |
 | `MC_USERNAME` / `MC_PASSWORD` | settings | Account credentials. |
 | `PUBLIC_URL` | auto | Keep-alive target. |
@@ -535,19 +535,23 @@ What the bot actually uses, measured locally: **~70 MB idle, ~100–130 MB after
 `minecraft-data` loads, one outbound TCP connection**. 512 MB is comfortable,
 256 MB is tight — set `NODE_OPTIONS=--max-old-space-size=192` there.
 
-### Bot panel (easiest, no card)
+### Botkeep (easiest, 512 MB, no card, no renewals)
 
-Upload the repo ZIP in the panel's file manager, then in its console:
+Sign up at `botkeep.cloud/register`, create a **Node.js 22** server, upload a ZIP
+whose root contains `package.json` (GitHub "Download ZIP" adds an outer folder —
+re-zip the contents), start command `npm start`, and one environment variable:
 
 ```
-unzip *.zip && mv aternosminecraftserverbot-main/* .
-npm ci --omit=dev || npm install --omit=dev
+NODE_OPTIONS=--max-old-space-size=384
 ```
 
-Startup file `index.js`, startup command `node index.js`, and
-`NODE_OPTIONS=--max-old-space-size=384` (or `192` on a 256 MB panel). A bot panel
-has no public URL, so the panel console is your dashboard — the bot itself is
-identical.
+Leave `PORT` unset: Botkeep passes the assigned port as `SERVER_PORT` and the app
+binds it. Full walkthrough with the exact console output:
+[`deploy/free-hosts.md`](deploy/free-hosts.md#1-botkeep--step-by-step).
+
+Other Pterodactyl-style panels (HeavenCloud, SillyDev, Waifly) have no build
+step — `unzip`, `npm ci --omit=dev`, startup command `node index.js`. Those
+panels give no public URL, so the console is your dashboard; the bot is identical.
 
 ### VM, VPS, home PC, Raspberry Pi
 
@@ -583,7 +587,7 @@ online is normal.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 9 suites (137 tests)
+npm run test:all          # syntax + all 9 suites (139 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -595,7 +599,7 @@ npm run test:all          # syntax + all 9 suites (137 tests)
 | `test-provider.js` | 21 | Status map 0–10, token exclusivity, base URL scheme, start/stop/restart paths, error surfacing, token scrubbing, endpoint wiring. |
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
-| `test-single-host.js` | 17 | The one-host promise, enforced: `render.yaml` has exactly **one** service, stays on `plan: free`, runs one instance of `node index.js`, keeps `BOT_BACKEND_URL` empty, caps the V8 heap under 512 MB, self-pings faster than Render's 15-min spin-down and health-checks `/health`; `Procfile`/`nixpacks`/`Dockerfile` agree on the port and the endpoint; `docker-compose.yml` and the systemd unit restart forever; the Termux script takes a wake-lock; `deploy/free-hosts.md` covers every free option and warns about multi-accounting; the serverless entry never claims to start a bot. |
+| `test-single-host.js` | 19 | The one-host promise, enforced: `render.yaml` has exactly **one** service, stays on `plan: free`, runs one instance of `node index.js`, keeps `BOT_BACKEND_URL` empty, caps the V8 heap under 512 MB, self-pings faster than Render's 15-min spin-down and health-checks `/health`; `Procfile`/`nixpacks`/`Dockerfile` agree on the port and the endpoint; `docker-compose.yml` and the systemd unit restart forever; the Termux script takes a wake-lock; `SERVER_PORT` is read so a panel host's assigned port is bound; `deploy/free-hosts.md` covers every free option and warns about multi-accounting; the serverless entry never claims to start a bot. |
 | `test-serverless.js` | 21 | The Vercel/Lambda entry: callable export, warning-free `vercel.json` + bounded `engines`, static-output hygiene, routing, no bot started, every page 200, honest banner, warm-handler reuse, POST bodies, proxying, 502 on a dead backend, plus the degraded paths (stripped `index.js`, module that throws, backend still reachable) and an import/export consistency check. |
 
 The suites use a 40-line harness (`tests/harness.js`) on top of `node:assert`.

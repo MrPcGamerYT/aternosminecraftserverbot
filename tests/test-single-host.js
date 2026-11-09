@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-single-host.js — one host really is enough
 //
-//   npm run test:single-host   (17 tests)
+//   npm run test:single-host   (19 tests)
 //
 // The README promises that an always-on host runs the whole app:
 // dashboard, controls and bot in ONE process, with nothing else to
@@ -172,6 +172,24 @@ test("the free-host guide covers every supported shape and the suspension cause"
   for (const file of ["docker-compose.yml", "deploy/minecraft-afk-bot.service", "deploy/vm-install.sh", "deploy/termux-install.sh"]) {
     assert.ok(fs.existsSync(path.join(root, file)), `${file} is referenced but missing`);
   }
+});
+
+test("the app binds the port a panel host assigns (SERVER_PORT)", () => {
+  const { resolveHttpPort } = require("../index.js");
+  assert.equal(resolveHttpPort({ SERVER_PORT: "32728" }), 32728, "Botkeep/Pterodactyl pass SERVER_PORT");
+  assert.equal(resolveHttpPort({ PORT: "8080" }), 8080);
+  assert.equal(resolveHttpPort({ PORT: "3000", SERVER_PORT: "32728" }), 3000, "explicit PORT wins");
+  assert.equal(resolveHttpPort({}), 5000, "local default");
+  assert.equal(resolveHttpPort({ PORT: "nope", SERVER_PORT: "x" }), 5000, "garbage falls back");
+});
+
+test("the Botkeep guide matches what the panel actually needs", () => {
+  assert.ok(/Botkeep/.test(freeHosts), "the guide should cover Botkeep");
+  assert.ok(/SERVER_PORT/.test(freeHosts), "it should explain the assigned port");
+  assert.ok(/npm start/.test(freeHosts), "start command the panel runs");
+  assert.ok(/max-old-space-size/.test(freeHosts), "heap cap for the 512 MB pool");
+  assert.ok(/package\.json at the archive root|package\.json`? at the archive root/i.test(freeHosts),
+    "ZIP root requirement is what makes an upload fail silently");
 });
 
 run("single-host deploy");
