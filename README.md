@@ -11,7 +11,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 ```
 npm install
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 115 tests, no framework, no network
+npm run test:all   # 120 tests, no framework, no network
 ```
 
 ---
@@ -78,6 +78,9 @@ npm run test:all   # 115 tests, no framework, no network
    npm start
    ```
 
+   Requires **Node 20–22** (`engines: ">=20 <23"`); the Dockerfile and nixpacks
+   config both pin Node 20.
+
 3. **Open the dashboard** at `http://localhost:5000`. The status card shows
    *Probing* → *Connecting* → *Connected*, or *Disconnected* with the reason.
 
@@ -115,7 +118,8 @@ Environment variables always win over `settings.json`.
 | `leaveRejoin.js` | Optional scheduled leave; **never** reconnects on its own. |
 | `logger.js` | In-memory ring buffer + console fan-out. |
 | `api/index.js` | Serverless entry point — exports the express handler Vercel invokes. Never starts a bot. |
-| `vercel.json` | Routes `/(.*)` → `api/index.js`, declares the function budget, no-store on status routes. |
+| `vercel.json` | Routes `/(.*)` → `api/index.js`, declares the function budget, publishes only `public/`, no-store on status routes. |
+| `public/index.html` | The only published static file: a self-contained status shell that queries `/status/light` and explains itself when no API is present. Keeps a static deployment from ever serving source. |
 
 There is exactly **one** owner for each timer: `timers.reconnect`, one watchdog
 per connection attempt, one keep-alive interval, one lease renewal.
@@ -425,6 +429,16 @@ so a partial `settings.json` still boots.
 
   1. Import the repo on Vercel (framework preset: **Other**, no build command —
      `vercel.json` sets `framework: null`).
+
+     The config is deliberately warning-free:
+
+     * **no `memory`** in `vercel.json` — it is ignored (and warns) on Active CPU
+       billing, so the plan decides it;
+     * **`engines.node` is a bounded range** (`>=20 <23`), not `>=18`: an
+       open-ended range makes Vercel warn and silently upgrade the major under you;
+     * `maxDuration: 30` is kept because it is honoured on every plan;
+     * `.npmrc` pins the install behaviour instead of relying on platform env.
+
   2. Deploy an always-on bot instance (Render/Koyeb/Fly/VPS) — a function cannot
      hold a Minecraft TCP session.
   3. In **Project → Settings → Environment Variables** add
@@ -449,7 +463,7 @@ Keep it to **one** bot instance per username.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 8 suites (115 tests)
+npm run test:all          # syntax + all 8 suites (120 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -461,7 +475,7 @@ npm run test:all          # syntax + all 8 suites (115 tests)
 | `test-provider.js` | 21 | Status map 0–10, token exclusivity, base URL scheme, start/stop/restart paths, error surfacing, token scrubbing, endpoint wiring. |
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
-| `test-serverless.js` | 16 | The Vercel/Lambda entry: callable export, `vercel.json` routing, no bot started, every page 200, honest banner, warm-handler reuse, POST bodies, proxying, 502 on a dead backend, plus the degraded paths (stripped `index.js`, module that throws, backend still reachable) and an import/export consistency check. |
+| `test-serverless.js` | 21 | The Vercel/Lambda entry: callable export, warning-free `vercel.json` + bounded `engines`, static-output hygiene, routing, no bot started, every page 200, honest banner, warm-handler reuse, POST bodies, proxying, 502 on a dead backend, plus the degraded paths (stripped `index.js`, module that throws, backend still reachable) and an import/export consistency check. |
 
 The suites use a 40-line harness (`tests/harness.js`) on top of `node:assert`.
 They start real local HTTP servers where behaviour matters, and they never touch
@@ -511,6 +525,44 @@ and will likely escalate. Change the behaviour (or the server), then press Start
 **Dashboard says the bot is stopped on Vercel**
 Correct — a serverless function cannot hold a Minecraft TCP connection. Run the bot
 on an always-on host and set `BOT_BACKEND_URL` here.
+
+**The URL shows raw JavaScript (`"use strict"; const fs = require(...)`)**
+That project is deployed as a **static site**, so `/` resolved to `index.js` and
+Vercel served the source as text. Nothing in the file structure prevented it —
+that is the bug this repo now fixes on three fronts:
+
+* `index.html` sits at the **repository root** — what any static host serves at
+  `/` — so even a project that ignores `vercel.json` gets the page;
+* `public/index.html` is the only published static file
+  (`outputDirectory: "public"`) for projects that do honour it, so `index.js`,
+  `settings.json` and friends have no URL at all;
+* `/` renders a status shell that queries `/status/light`;
+* when the function is deployed properly, `rewrites` send every path to
+  `api/index.js` and the static file is never reached.
+
+An **existing** static project will keep serving the old source until you either
+redeploy this commit or, better, switch it to the function layout:
+
+1. **Settings → Build & Development Settings** → Framework Preset **Other**,
+   Build Command *empty*, Output Directory **empty** (run `vercel.json`'s
+   `outputDirectory` for you) or explicitly `public`.
+2. Confirm **Root Directory** is the repo root so `api/index.js` is detected.
+3. **Redeploy** (Build Cache off). `/` should then return the dashboard HTML and
+   `/health` should return JSON.
+
+If the project still serves files after that, the deployment is static-only:
+delete the project and re-import the repo — a project created as a static site
+keeps no functions.
+
+**Build log warns about `engines`, `memory` or `cache-dir`**
+All three are handled in this repo; seeing them means the deployed commit is older
+than `0de812e`:
+
+| Warning | Cause | Handled by |
+| --- | --- | --- |
+| `"engines": { "node": ">=18" } … will automatically upgrade` | open-ended range | `engines.node: ">=20 <23"` |
+| `Provided memory setting in vercel.json is ignored on Active CPU billing` | plan-specific setting | `memory` removed; only `maxDuration` remains |
+| `npm warn Unknown env config "cache-dir"` | Vercel injects an env config npm 11 dropped | `.npmrc` pins supported options; harmless either way |
 
 **Vercel shows `500: INTERNAL_SERVER_ERROR` / `FUNCTION_INVOCATION_FAILED`**
 The function threw while loading. This repo ships the handler at `api/index.js`

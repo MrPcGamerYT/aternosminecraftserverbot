@@ -63,8 +63,34 @@ test("2. vercel.json routes everything into that function", () => {
   const config = JSON.parse(fs.readFileSync(path.join(ROOT, "vercel.json"), "utf8"));
   assert.deepEqual(config.rewrites, [{ source: "/(.*)", destination: "/api/index.js" }]);
   assert.equal(config.framework, null);
-  assert.ok(config.functions["api/index.js"], "the function is declared with a memory/time budget");
+  assert.ok(config.functions["api/index.js"], "the function is declared with a time budget");
   assert.ok(config.functions["api/index.js"].maxDuration > 0);
+  // Only public/ is published as static output, so source files have no URL.
+  assert.equal(config.outputDirectory, "public");
+});
+
+test("2b. vercel.json contains nothing Vercel warns about", () => {
+  const config = JSON.parse(fs.readFileSync(path.join(ROOT, "vercel.json"), "utf8"));
+  const fn = config.functions["api/index.js"];
+  // "Provided `memory` setting in `vercel.json` is ignored on Active CPU billing."
+  assert.equal(fn.memory, undefined, "memory is Vercel-plan dependent: it warns, and silently does nothing");
+  // maxDuration is honoured on every plan, so it stays.
+  assert.equal(fn.maxDuration, 30);
+  // No stray properties that only exist to satisfy a plan we can't detect.
+  assert.deepEqual(Object.keys(fn).sort(), ["maxDuration"]);
+});
+
+test("2c. engines pins the Node major instead of an open-ended range", () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  const range = pkg.engines && pkg.engines.node;
+  assert.ok(range, "engines.node must be set");
+  // ">=18" makes Vercel warn and auto-upgrade majors under us.
+  assert.ok(!/^>=?\s*\d+(\.\d+)*$/.test(range.trim()), `"${range}" auto-upgrades to future majors`);
+  assert.match(range, /<\d+/, "the range needs an upper bound");
+  // ...but it must still allow a modern LTS the bot is tested on.
+  const [lower, upper] = range.replace(/[><=]/g, " ").trim().split(/\s+/);
+  assert.ok(Number(lower) >= 18, `${lower} is below the documented minimum`);
+  assert.ok(Number(upper) >= 22, `the ceiling (${upper.split(".")[0]}) is too low for current LTS`);
 });
 
 test("3. no bot is started by the serverless entry (it cannot be)", () => {
@@ -358,6 +384,73 @@ test("16. api/index.js never imports a name index.js does not export", () => {
       `api/index.js imports ${name}, which index.js no longer exports — the deployment would 500`,
     );
   }
+});
+
+// ------------------------------------------------------------
+// Static-deployment safety
+//
+// aternosminecraftserverbot.vercel.app was a *static* project: with no
+// function and no index.html, "/" resolved to index.js and the whole
+// source was served as text. These tests make sure the repo can never
+// present itself that way again.
+// ------------------------------------------------------------
+
+test("17. a static deployment shows a page, never source code", async () => {
+  const html = fs.readFileSync(path.join(ROOT, "public", "index.html"), "utf8");
+  assert.ok(html.includes("/status/light"), "it must try the live API first");
+  assert.match(html, /static|serverless/i, "and explain itself when there is none");
+  assert.match(html, /BOT_BACKEND_URL/);
+  // Self-contained: no build step, no CDN, no missing assets in a bare deploy.
+  assert.ok(!/<script[^>]+src=/i.test(html), "no external scripts");
+  assert.ok(!/<link[^>]+href="http/i.test(html), "no external stylesheets");
+  // It must never look like a JS file.
+  assert.ok(!/^\s*("use strict"|const |function \w+\()/.test(html));
+});
+
+test("18. a root-served static deployment gets the page too", () => {
+  // Vercel can serve the repository root directly (no outputDirectory honoured)
+  // when a project was created as a static site. Without a root index.html,
+  // "/" resolves to the first file alphabetically -- index.js.
+  const rootPage = path.join(ROOT, "index.html");
+  assert.ok(fs.existsSync(rootPage), "the repo root needs an index.html for static hosting");
+  assert.equal(
+    fs.readFileSync(rootPage, "utf8"),
+    fs.readFileSync(path.join(ROOT, "public", "index.html"), "utf8"),
+    "root and public/ copies must not drift",
+  );
+  const html = fs.readFileSync(rootPage, "utf8");
+  assert.ok(!/<script[^>]+src=/i.test(html), "no external scripts");
+  assert.ok(html.includes("/status/light"), "it queries the live API");
+});
+
+test("19. nothing at the web root can serve a source file", () => {
+  const config = JSON.parse(fs.readFileSync(path.join(ROOT, "vercel.json"), "utf8"));
+
+  // The static output directory must exist and contain ONLY the shell page.
+  // Everything else in the repo (index.js, settings.json, ...) then has no URL
+  // at all -- this is what stops the old "raw index.js at /" behaviour.
+  assert.equal(config.outputDirectory, "public");
+  const published = fs.readdirSync(path.join(ROOT, "public"));
+  assert.deepEqual(published, ["index.html"], `public/ must stay a single page, found ${published.join(", ")}`);
+  // ...and the root copy is the same file, so neither can be replaced by source.
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, "index.html"), "utf8"),
+    fs.readFileSync(path.join(ROOT, "public", "index.html"), "utf8"),
+  );
+
+  // No source file or config may live there.
+  const forbidden = ["index.js", "settings.json", "package.json", "api", "tests", "node_modules", ".env"];
+  for (const name of forbidden) {
+    assert.ok(
+      !published.includes(name),
+      `public/${name} would be downloadable by anyone`,
+    );
+  }
+
+  // And the function stays declared: a static-only project has no rewrite at
+  // all, which is exactly how the old deployment broke.
+  assert.ok(config.functions["api/index.js"], "the function must be declared");
+  assert.equal(config.framework, null, "framework:null keeps Vercel from guessing a static build");
 });
 
 run("serverless");
