@@ -7,7 +7,7 @@
   },
   "server": {
     "ip": "ZLAG.aternos.me",
-    "port": ZLAG.aternos.me,
+    "port": 39033,
     "version": "1.21.1",
     "try-creative": false
   },
