@@ -1,0 +1,36 @@
+# version control
+.git
+.gitignore
+.github
+
+# dependencies (rebuilt inside the image)
+node_modules
+npm-debug.log*
+
+# tests and local tooling
+tests
+*.test.js
+.nyc_output
+coverage
+
+# local environment and secrets — never bake a token into an image
+.env
+.env.*
+*.pem
+*.key
+
+# editor / OS noise
+.vscode
+.idea
+.DS_Store
+
+# docs and deploy descriptors that are not needed at runtime
+README.md
+render.yaml
+Procfile
+nixpacks.toml
+dependabot.yml
+
+# runtime junk
+*.log
+tmp

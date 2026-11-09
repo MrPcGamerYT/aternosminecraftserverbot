@@ -1,118 +1,114 @@
-function randomMs(minMs, maxMs) {
-    return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs
+"use strict";
+
+// ============================================================
+// leaveRejoin.js — optional "leave on a timer, come back" cycle
+//
+// Some servers idle-kick after a fixed period. Rather than being
+// kicked mid-session, the bot can leave politely and rejoin on its
+// own schedule. That is the only thing this module does:
+//
+//   spawn -> wait a random stay window -> bot.quit()
+//
+// It deliberately does NOT reconnect. index.js owns exactly one
+// reconnect scheduler, and a second one here used to cause
+// duplicate logins (which look like botting to the server).
+//
+// Options (all optional):
+//   log        function(message)     log sink, defaults to console.log
+//   minStayMs  number                minimum time to stay connected
+//   maxStayMs  number                maximum time to stay connected
+//   onLeave    function()            called just before quitting
+//
+// `createBot` is accepted for API compatibility with older versions
+// of this file and is never invoked — the scheduler handles rejoins.
+// ============================================================
+
+const DEFAULT_MIN_STAY_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_MAX_STAY_MS = 15 * 60 * 1000; // 15 minutes
+
+function randomInt(min, max) {
+  const lo = Math.ceil(min);
+  const hi = Math.floor(max);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return lo;
+  return Math.floor(Math.random() * (hi - lo + 1)) + lo;
 }
 
-function setupLeaveRejoin(bot, createBot) {
-    // Timers
-    let leaveTimer = null
-    let jumpTimer = null
-    let jumpOffTimer = null
-    let reconnectTimer = null
+function setupLeaveRejoin(bot, createBot, options = {}) {
+  const log = typeof options.log === "function" ? options.log : (msg) => console.log(msg);
 
-    // State
-    let stopped = false
-    let reconnectAttempts = 0
-    let lastLogAt = 0
+  const minStay = Number(options.minStayMs) > 0 ? Number(options.minStayMs) : DEFAULT_MIN_STAY_MS;
+  const maxStay = Number(options.maxStayMs) > minStay ? Number(options.maxStayMs) : Math.max(minStay, DEFAULT_MAX_STAY_MS);
 
-    function logThrottled(msg, minGapMs = 2000) {
-        const now = Date.now()
-        if (now - lastLogAt >= minGapMs) {
-            lastLogAt = now
-            console.log(msg)
+  let leaveTimer = null;
+  let stopped = false;
+  let lastLogAt = 0;
+
+  function logThrottled(msg, minGapMs = 2000) {
+    const now = Date.now();
+    if (now - lastLogAt < minGapMs) return;
+    lastLogAt = now;
+    log(msg);
+  }
+
+  function cleanup() {
+    if (leaveTimer) clearTimeout(leaveTimer);
+    leaveTimer = null;
+  }
+
+  function scheduleLeave() {
+    cleanup();
+    if (stopped) return;
+
+    const stay = randomInt(minStay, maxStay);
+    logThrottled(`[LeaveRejoin] Leaving in ${Math.round(stay / 1000)}s`);
+
+    leaveTimer = setTimeout(() => {
+      leaveTimer = null;
+      if (stopped) return;
+      logThrottled("[LeaveRejoin] Leaving the server now");
+      cleanup();
+      if (typeof options.onLeave === "function") {
+        try {
+          options.onLeave();
+        } catch (err) {
+          log(`[LeaveRejoin] onLeave failed: ${err.message}`);
         }
-    }
+      }
+      try {
+        if (bot && typeof bot.quit === "function") bot.quit("scheduled leave");
+      } catch (_err) {
+        // Already closed — nothing to do.
+      }
+    }, stay);
 
-    function cleanup() {
-        stopped = true
-        if (leaveTimer) clearTimeout(leaveTimer)
-        if (jumpTimer) clearTimeout(jumpTimer)
-        if (jumpOffTimer) clearTimeout(jumpOffTimer)
-        if (reconnectTimer) clearTimeout(reconnectTimer)
-        leaveTimer = jumpTimer = jumpOffTimer = reconnectTimer = null
-    }
+    if (leaveTimer && typeof leaveTimer.unref === "function") leaveTimer.unref();
+  }
 
-    function scheduleNextJump() {
-        if (stopped || !bot.entity) return
+  bot.on("spawn", () => {
+    stopped = false;
+    scheduleLeave();
+  });
 
-        bot.setControlState('jump', true)
-        jumpOffTimer = setTimeout(() => {
-            bot.setControlState('jump', false)
-        }, 300)
+  // Any teardown cancels the pending leave. We never reconnect here.
+  const stop = () => {
+    stopped = true;
+    cleanup();
+  };
 
-        // random jump 20s -> 5m
-        const nextJump = randomMs(20000, 5 * 60 * 1000)
-        jumpTimer = setTimeout(scheduleNextJump, nextJump)
-    }
+  bot.on("end", stop);
+  bot.on("kicked", stop);
+  bot.on("error", stop);
 
-    function scheduleReconnect(reason = 'end') {
-        if (stopped) return
-
-        // FAST RECONNECT: 2s -> 10s (User requested faster)
-        let delay = randomMs(2000, 10000)
-
-        // Slight backoff for repeated failures, but keep it snappy
-        reconnectAttempts++
-        if (reconnectAttempts > 3) {
-            delay += 5000 // Add 5s if it's failing a lot
-        }
-
-        // Cap at 30s max
-        delay = Math.min(delay, 15000)
-
-        logThrottled(`[AFK] Rejoin scheduled in ${Math.round(delay / 1000)}s (reason: ${reason}, attempt: ${reconnectAttempts})`)
-
-        reconnectTimer = setTimeout(() => {
-            if (stopped) return
-            try {
-                if (typeof createBot === 'function') createBot()
-            } catch (e) {
-                console.log('[AFK] createBot error:', e?.message || e)
-                scheduleReconnect('createBot-error')
-            }
-        }, delay)
-    }
-
-    bot.once('spawn', () => {
-        // reset attempt counter on successful connect
-        reconnectAttempts = 0
-
-        // clear any old timers
-        cleanup()
-        stopped = false
-
-        // Stay connected: 2 minutes -> 15 minutes (More realistic AFK behavior)
-        // Stay connected 1-5 minutes before a scheduled leave/rejoin cycle.
-        const stayTime = randomMs(60000, 300000)
-
-        logThrottled(`[AFK] Will leave in ${Math.round(stayTime / 1000)} seconds`)
-
-        scheduleNextJump()
-
-        leaveTimer = setTimeout(() => {
-            if (stopped) return
-            logThrottled('[AFK] Leaving server (timer)')
-            cleanup()
-            try {
-                bot.quit()
-            } catch (e) {
-                // ignore if already closed
-            }
-        }, stayTime)
-    })
-
-    // When the connection ends for ANY reason, just clean up our timers.
-    // Reconnection is handled by index.js — no duplicate reconnect here.
-    bot.on('end', () => {
-        cleanup()
-    })
-
-    bot.on('kicked', () => {
-        cleanup()
-    })
-
-    bot.on('error', () => {
-        cleanup()
-    })
+  return {
+    stop,
+    get scheduled() {
+      return Boolean(leaveTimer);
+    },
+  };
 }
 
-module.exports = setupLeaveRejoin
+module.exports = setupLeaveRejoin;
+module.exports.setupLeaveRejoin = setupLeaveRejoin;
+module.exports.randomInt = randomInt;
+module.exports.DEFAULT_MIN_STAY_MS = DEFAULT_MIN_STAY_MS;
+module.exports.DEFAULT_MAX_STAY_MS = DEFAULT_MAX_STAY_MS;
