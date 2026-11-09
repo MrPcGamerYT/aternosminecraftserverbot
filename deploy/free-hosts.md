@@ -351,6 +351,33 @@ its console. Free container, no card.
    in a loop, that was the liveness bug fixed in `0b31854` — make sure
    `index.js` is the current one from `main`.
 
+### The public dashboard URL (SillyDev gives you one)
+
+SillyDev's own FAQ: *"Your server gets a public address and port, shown in your
+panel. Have your app listen on `0.0.0.0` and the port in the `SERVER_PORT`
+environment variable, and it is reachable over plain HTTP straight away."*
+
+That is exactly what this bot does, so:
+
+1. Panel → **Network** tab → copy the address next to your allocation,
+   e.g. `123.45.67.89:6219` or `node-08.sillydev.co.uk:6219`.
+2. Open `http://<that address>` in a browser. That is the dashboard: status card,
+   logs, Start/Stop/Restart, `/command`, tutorial.
+3. **It is plain HTTP and it is public** — no domain, no certificate. Anyone with
+   the URL can stop the bot or type into your Minecraft session, so protect it:
+
+   ```
+   DASHBOARD_PASSWORD=pick-a-long-password
+   DASHBOARD_USER=admin
+   ```
+
+   Environment tab, then restart. The browser asks for the password; `/health`
+   and `/ping` stay open so the panel's own checks keep working.
+
+4. Want **HTTPS** and a real domain? Run Cloudflare Tunnel next to the app
+   (SillyDev suggests the same thing) or put a reverse proxy in front, and point
+   the domain at port `SERVER_PORT`.
+
 ### Wiring the panel to a Vercel dashboard
 
 The bot listens on the panel's assigned port (e.g. `6158`). For the vercel.app
@@ -438,6 +465,44 @@ No spin-down, no cold start, no suspension for staying awake, and the dashboard
 is yours.
 
 ---
+
+## 9. More hosts, one table
+
+Everything below runs this repo unchanged (`PORT` or `SERVER_PORT`, one process,
+`npm start`). "Public URL" means the dashboard is reachable from a browser
+without a tunnel.
+
+| Host | Free? | Card? | Public URL | RAM | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| **SillyDev** | yes, no expiry | no | **yes** — `IP:PORT`, plain HTTP | 256 MB | what you are on now; add `DASHBOARD_PASSWORD` |
+| **alwaysdata** | yes, personal use | no | **yes** — HTTPS + `you.alwaysdata.net` | 256 MB / 1 GB disk | the only free host here with **HTTPS included**; Node site + this bot's web server fits |
+| **Botkeep** | yes | no | yes, via Domains | 512 MB | best free RAM, but capacity is a queue |
+| **Waifly** | yes | no | yes (`IP:PORT`) | 300 MB | no renewal clicks; suspended if offline 3 days |
+| **HeavenCloud** | yes | no | yes (`IP:PORT`) | 512 MB | weekly renewal click |
+| **FreeGameHost** | yes | no | yes (`IP:PORT`) | 256 MB | renewal every 12 h — worst upkeep |
+| **Oracle Cloud** | always free | yes (₹0) | **yes** — real IP, HTTPS with Caddy | 24 GB | the "no limits" answer; signup sometimes refuses |
+| **Northflank Sandbox** | yes | **yes, required** | yes, HTTPS | 512 MB+ | always-on and well run — needs a payment method on file |
+| **Koyeb** | yes | card hold $29 | yes, HTTPS | 512 MB | scales to zero after 1 h idle — the Render trap again |
+| **Zeabur** | $5/mo credit | no | yes, HTTPS | 512 MB | auto-sleeps when idle; credit runs out |
+| **Railway** | $5 trial, then $1/mo credit | no for trial | yes, HTTPS | 512 MB | fine to test, not a 24/7 home |
+| **Hetzner / RackNerd / VisiHost** | no | yes | yes | 2–4 GB | €3.79/mo, ~$11/year, or ₹99 — no queues, no rules |
+
+### alwaysdata, in short
+
+Free, no card, real HTTPS on a real domain — the one free option that fixes the
+"plain HTTP, no certificate" awkwardness of a panel:
+
+1. Sign up at `alwaysdata.com` (no card, personal use).
+2. **Web → Sites → Add a site** → type **Node.js**, working directory the repo,
+   command `node index.js`.
+3. Upload the project (SSH/SFTP is included on the free plan), run
+   `npm ci --omit=dev`.
+4. Set `DASHBOARD_PASSWORD` and `NODE_OPTIONS=--max-old-space-size=192` in
+   **Advanced → Environment**.
+5. The site answers on `https://<account>.alwaysdata.net`.
+
+`alwaysdata` assigns the port through the `PORT` variable, which this app already
+reads — no extra configuration.
 
 ## What not to do on the next host
 

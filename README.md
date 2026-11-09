@@ -12,7 +12,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 npm install
 npm run doctor     # pre-flight: node version, files, deps, target, port
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 153 tests, no framework, no network
+npm run test:all   # 159 tests, no framework, no network
 ```
 
 ---
@@ -410,6 +410,8 @@ so a partial `settings.json` still boots.
 | `PORT` | `5000` | HTTP port (binds `0.0.0.0`). Panel hosts that assign one, like Botkeep, pass it as `SERVER_PORT` and that is read automatically. |
 | `MC_SERVER_HOST` / `MC_SERVER_PORT` | settings | Server target (`host:port` also accepted). |
 | `MC_USERNAME` / `MC_PASSWORD` | settings | Account credentials. |
+| `DASHBOARD_PASSWORD` | (none) | HTTP basic auth for the dashboard. Set it whenever the port is public — a panel host publishes it. `/ping`, `/health` and `/mirror/status` stay open so health checks work. Surrounding whitespace is trimmed. |
+| `DASHBOARD_USER` | `admin` | User name for that password. |
 | `PUBLIC_URL` | auto | Keep-alive target. |
 | `SELF_PING_INTERVAL_MS` | `240000` | Keep-alive cadence. |
 | `BOT_BACKEND_URL` | — | Proxy every request to an always-on bot. |
@@ -593,7 +595,7 @@ online is normal.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 11 suites (153 tests)
+npm run test:all          # syntax + all 12 suites (159 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -605,6 +607,7 @@ npm run test:all          # syntax + all 11 suites (153 tests)
 | `test-provider.js` | 21 | Status map 0–10, token exclusivity, base URL scheme, start/stop/restart paths, error surfacing, token scrubbing, endpoint wiring. |
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
+| `test-dashboard-auth.js` | 6 | Optional dashboard password: off with no env var, 401 + `WWW-Authenticate` without one, accepted with the right user/password, wrong user/password/garbage rejected, `/ping` `/health` `/mirror/status` left open for health checks, and tricky passwords (`:`, unicode) still work. |
 | `test-doctor.js` | 8 | The pre-flight check: a real checkout passes, a ZIP with an extra folder is explained with the `mv` that fixes it, missing `node_modules` names the command, broken `settings.json` and an empty target fail, Node 18 fails / 25 warns, `SERVER_PORT` becomes the reported port, Vercel without `BOT_BACKEND_URL` is a hard failure, and a half-written `node_modules` is caught when mineflayer is required instead of at login. |
 | `test-liveness.js` | 6 | What counts as "the server is still talking": parsed packets alone keep a session alive (the panel-host 90s loop), raw bytes and chat still count, genuine silence still reconnects, detach removes every listener, and a bot with no `_client` never throws. |
 | `test-single-host.js` | 19 | The one-host promise, enforced: `render.yaml` has exactly **one** service, stays on `plan: free`, runs one instance of `node index.js`, keeps `BOT_BACKEND_URL` empty, caps the V8 heap under 512 MB, self-pings faster than Render's 15-min spin-down and health-checks `/health`; `Procfile`/`nixpacks`/`Dockerfile` agree on the port and the endpoint; `docker-compose.yml` and the systemd unit restart forever; the Termux script takes a wake-lock; `SERVER_PORT` is read so a panel host's assigned port is bound; `deploy/free-hosts.md` covers every free option and warns about multi-accounting; the serverless entry never claims to start a bot. |

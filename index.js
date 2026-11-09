@@ -20,6 +20,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const http = require("http");
+const crypto = require("crypto");
 const https = require("https");
 const { URL } = require("url");
 const express = require("express");
@@ -2780,10 +2781,75 @@ setTimeout(function () { location.reload(); }, 15000);
 //  EXPRESS APP
 // ============================================================================
 
+// Endpoints a machine calls, not a browser: host health checks, the keep-alive
+// self-ping and instance-to-instance mirror traffic. They stay reachable when
+// DASHBOARD_PASSWORD is set, otherwise every platform health check would fail.
+const DASHBOARD_PUBLIC_PATHS = new Set(["/ping", "/health", "/mirror/status"]);
+
+/** Constant-time compare that does not leak the length. */
+function secretsMatch(given, expected) {
+  const a = Buffer.from(String(given || ""), "utf8");
+  const b = Buffer.from(String(expected || ""), "utf8");
+  if (a.length !== b.length) return false;
+  try {
+    return crypto.timingSafeEqual(a, b);
+  } catch (_err) {
+    return false;
+  }
+}
+
+/**
+ * Optional HTTP basic auth for the dashboard.
+ *
+ * A panel host exposes the assigned port on the public internet (plain HTTP,
+ * no domain). Without this, anyone who finds the URL can press Stop, read the
+ * logs, or run `/command` inside the Minecraft session. Off by default: with no
+ * `DASHBOARD_PASSWORD` the dashboard behaves exactly as before.
+ */
+function dashboardAuth(env) {
+  const password = String(env.DASHBOARD_PASSWORD || "").trim();
+  if (!password) return null;
+  const user = String(env.DASHBOARD_USER || "admin").trim();
+
+  return (req, res, next) => {
+    if (DASHBOARD_PUBLIC_PATHS.has(req.path)) return next();
+
+    const header = String(req.headers.authorization || "");
+    const match = /^Basic\s+(.+)$/i.exec(header);
+    if (match) {
+      const decoded = Buffer.from(match[1], "base64").toString("utf8");
+      const split = decoded.indexOf(":");
+      if (split > -1) {
+        const givenUser = decoded.slice(0, split);
+        const givenPass = decoded.slice(split + 1);
+        if (safeEqualStr(givenUser, user) && secretsMatch(givenPass, password)) return next();
+      }
+    }
+
+    res.set("WWW-Authenticate", 'Basic realm="Minecraft AFK Bot", charset="UTF-8"');
+    res.status(401).type("text/plain").send("Authentication required");
+  };
+}
+
+function safeEqualStr(a, b) {
+  const left = Buffer.from(String(a || ""), "utf8");
+  const right = Buffer.from(String(b || ""), "utf8");
+  if (left.length !== right.length) return false;
+  try {
+    return crypto.timingSafeEqual(left, right);
+  } catch (_err) {
+    return false;
+  }
+}
+
 function createApp(options = {}) {
   const app = express();
   app.disable("x-powered-by");
   runtime.backendError = null;
+
+  // ---- optional dashboard password ------------------------------------
+  const auth = dashboardAuth(env);
+  if (auth) app.use(auth);
 
   // ---- proxy passthrough ---------------------------------------------
   // When BOT_BACKEND_URL is set, every request is forwarded verbatim
@@ -3180,6 +3246,11 @@ function startHttpServer(port = resolveHttpPort(env)) {
     const actual = httpServer.address();
     const shown = actual && typeof actual === "object" ? actual.port : port;
     addLog(`[Server] Dashboard listening on http://0.0.0.0:${shown}`);
+    if (String(env.DASHBOARD_PASSWORD || "").trim()) {
+      addLog("[Server] Dashboard password required (HTTP basic auth)");
+    } else if (!proxyInfo.proxy && !serverlessInfo.serverless) {
+      addLog("[Server] Dashboard is NOT password protected — set DASHBOARD_PASSWORD if the port is public");
+    }
     const publicUrl = watcherModule.resolvePublicUrl(env);
     if (publicUrl) addLog(`[Server] Public URL: ${publicUrl}`);
   });
@@ -3546,6 +3617,7 @@ const exported = {
   resolveHttpPort,
   attachLivenessSources,
   socketStateOf,
+  dashboardAuth,
   provider,
   addLog,
   getLogs,
