@@ -27,14 +27,17 @@
       "sneak": true
     },
     "chat-messages": {
-      "enabled": false,
-      "repeat": false,
-      "repeat-delay": 120,
+      "enabled": true,
+      "repeat": true,
+      "repeat-delay": 420,
+      "only-when-players-online": true,
       "messages": [
         "Don't Come at me",
         "Don't try to think That",
         "you can't still close",
-        "lwl"
+        "lwl",
+        "brb",
+        "afk a bit"
       ]
     },
     "chat-log": true,

@@ -12,7 +12,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 npm install
 npm run doctor     # pre-flight: node version, files, deps, target, port
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 160 tests, no framework, no network
+npm run test:all   # 169 tests, no framework, no network
 ```
 
 ---
@@ -385,7 +385,13 @@ RAILWAY_PUBLIC_DOMAIN auto
     },
     "auto-auth":     { "enabled": false, "password": "" },
     "anti-afk":      { "enabled": true,  "sneak": false },
-    "chat-messages": { "enabled": false, "repeat": false, "repeat-delay": 120, "messages": [] },
+    "chat-messages": {
+      "enabled": false,                  // true = the bot talks
+      "repeat": false,                   // true = keep talking every "repeat-delay"
+      "repeat-delay": 420,               // seconds; 60-140% jitter applied, 5s floor
+      "only-when-players-online": true,  // stay silent on an empty server
+      "messages": []                     // picked at random, never twice in a row
+    },
     "leave-rejoin":  { "enabled": false, "min-stay-ms": 300000, "max-stay-ms": 900000 }
   },
   "provider": {
@@ -595,7 +601,7 @@ online is normal.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 12 suites (160 tests)
+npm run test:all          # syntax + all 13 suites (169 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -607,6 +613,7 @@ npm run test:all          # syntax + all 12 suites (160 tests)
 | `test-provider.js` | 21 | Status map 0–10, token exclusivity, base URL scheme, start/stop/restart paths, error surfacing, token scrubbing, endpoint wiring. |
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
+| `test-chat.js` | 9 | Chat that reads like a person: every gap is 60–140% of `repeat-delay` with a 5 s floor, the same line never repeats back to back even with a degenerate random source, one-line and empty lists behave, 420 s averages 6–8 minutes; and the console box sends chat, refuses shell commands (`npm install` gets an explanation instead of "not connected") and reports stopped vs not-connected correctly. |
 | `test-dashboard-auth.js` | 6 | Optional dashboard password: off with no env var, 401 + `WWW-Authenticate` without one, accepted with the right user/password, wrong user/password/garbage rejected, `/ping` `/health` `/mirror/status` left open for health checks, and tricky passwords (`:`, unicode) still work. |
 | `test-doctor.js` | 9 | The pre-flight check: a real checkout passes, a ZIP with an extra folder is explained with the `mv` that fixes it, missing `node_modules` names the command, broken `settings.json` and an empty target fail, Node 18 fails / 25 warns, `SERVER_PORT` becomes the reported port, Vercel without `BOT_BACKEND_URL` is a hard failure, and a half-written `node_modules` is caught when mineflayer is required instead of at login. |
 | `test-liveness.js` | 6 | What counts as "the server is still talking": parsed packets alone keep a session alive (the panel-host 90s loop), raw bytes and chat still count, genuine silence still reconnects, detach removes every listener, and a bot with no `_client` never throws. |
@@ -659,12 +666,14 @@ commit or a panel that genuinely drops the connection:
   the Minecraft server itself is quiet during long night-time lulls.
 
 **A host suspended the server: was it the bot?**
-Usually one of three things, all visible in your own config: repeating chat
-(`utils."chat-messages"` with `repeat: true` — hosts call it spam and Minecraft
-servers ban for it), a reconnect storm from an old `index.js`, or a second
-account/server after a suspension (ban evasion). `npm run doctor` warns about the
-chat setting. SillyDev explicitly allows AFK clients; Aternos does not allow AFK
-bots at all, so the *Minecraft* server can be suspended regardless of the host.
+Usually one of three things, all visible in your own config: fast repeating chat
+(`utils."chat-messages"` under 120 s, or a threat like "I will ban you" — hosts
+call that spam and servers ban for it), a reconnect storm from an old `index.js`,
+or a second account/server after a suspension (ban evasion). `npm run doctor`
+judges all of it. Chat itself is fine — and it is the most human-looking thing a
+bot does, so keep gaps at 5-10 minutes with jitter. SillyDev explicitly allows
+AFK clients; Aternos does not allow AFK bots at all, so the *Minecraft* server can
+be suspended regardless of the host, and chat does not change that.
 See [Suspensions](deploy/free-hosts.md#11-suspensions-what-actually-gets-this-bot-banned).
 
 **"Another instance is running this username"**

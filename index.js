@@ -58,7 +58,13 @@ const DEFAULT_CONFIG = {
   utils: {
     "auto-auth": { enabled: false, password: "" },
     "anti-afk": { enabled: true, sneak: false },
-    "chat-messages": { enabled: false, repeat: false, "repeat-delay": 120, messages: [] },
+    "chat-messages": {
+      enabled: false,
+      repeat: false,
+      "repeat-delay": 120,
+      "only-when-players-online": false,
+      messages: [],
+    },
     "chat-log": true,
     "auto-reconnect": true,
     "auto-reconnect-delay": 2000,
@@ -1927,30 +1933,75 @@ function setupAutoAuth(bot) {
   setTimeout(() => tryAuth("login"), 10000).unref?.();
 }
 
+/**
+ * Gap until the next chat line, in ms: 60-140% of the configured delay.
+ * A fixed timer is the most machine-looking thing a bot can do.
+ */
+function chatGapMs(baseMs, random = Math.random) {
+  const base = Math.max(5000, Number(baseMs) || 0);
+  return Math.round(base * (0.6 + random() * 0.8));
+}
+
+/** Random line, never the same one twice in a row while alternatives exist. */
+function pickChatMessage(messages, last, random = Math.random) {
+  const list = Array.isArray(messages) ? messages.filter(Boolean) : [];
+  if (list.length === 0) return "";
+  if (list.length === 1) return list[0];
+  // Draw from everything except the previous line, so the guarantee does not
+  // depend on the random source being well behaved.
+  const pool = list.filter((message) => message !== last);
+  const from = pool.length > 0 ? pool : list;
+  return from[Math.floor(random() * from.length)];
+}
+
 function setupChatMessages(bot) {
   const chatConfig = (config.utils && config.utils["chat-messages"]) || {};
   if (!chatConfig.enabled) return;
   const messages = Array.isArray(chatConfig.messages) ? chatConfig.messages.filter(Boolean) : [];
   if (messages.length === 0) return;
+  const onlyWithPlayers = chatConfig["only-when-players-online"] === true;
+
+  const someoneElseOnline = () => {
+    if (!onlyWithPlayers) return true;
+    try {
+      if (!bot.players || typeof bot.players !== "object") return true;
+      return Object.keys(bot.players).some((name) => name !== bot.username);
+    } catch (_err) {
+      return true;
+    }
+  };
 
   if (chatConfig.repeat) {
-    const delay = Math.max(5000, Number(chatConfig["repeat-delay"] || 120) * 1000);
-    let index = 0;
+    const base = Math.max(5000, Number(chatConfig["repeat-delay"] || 120) * 1000);
+    // A perfectly periodic timer is the most machine-looking thing a bot can
+    // do. Humans type at uneven intervals, so every gap is 60-140% of the
+    // configured delay; the tick only exists to check whether it is time.
+    const nextGap = () => chatGapMs(base);
+    let nextAt = Date.now() + nextGap();
+    let last = "";
     addBotInterval(() => {
       if (!runtime.connectedAt) return;
+      if (Date.now() < nextAt) return;
+      nextAt = Date.now() + nextGap();
+      if (!someoneElseOnline()) return;
       try {
-        bot.chat(messages[index % messages.length]);
-        index += 1;
+        last = pickChatMessage(messages, last);
+        bot.chat(last);
         if (watchdog) watchdog.noteMovement();
       } catch (_err) {
         /* ignore */
       }
-    }, delay);
+    }, 15000).unref?.();
   } else {
-    messages.forEach((message, index) => {
+    const queue = messages.slice();
+    for (let i = queue.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [queue[i], queue[j]] = [queue[j], queue[i]];
+    }
+    queue.forEach((message, index) => {
       setTimeout(() => {
         try {
-          if (runtime.connectedAt) bot.chat(message);
+          if (runtime.connectedAt && someoneElseOnline()) bot.chat(message);
         } catch (_err) {
           /* ignore */
         }
@@ -2295,6 +2346,17 @@ function sendConsoleCommand(command) {
   const cmd = String(command || "").trim();
   if (!cmd) return { ok: false, msg: "Empty command." };
 
+  // This box sends Minecraft chat, it is not a shell. People type `npm install`
+  // here because a Pterodactyl console looks the same, then are told "Bot is not
+  // connected yet" and think the install failed. Say what actually happened.
+  if (/^(npm|npx|pnpm|yarn|node|git|ls|cd|cat|rm|cp|mv|curl|wget|apt|apk|sudo|bash|sh|docker)\b/.test(cmd)) {
+    const msg =
+      `"${cmd.split(/\s+/)[0]}" is a shell command — this box only sends Minecraft chat and commands. ` +
+      "npm install runs by itself when the server starts; to run the doctor set MAIN_FILE=doctor.js in Startup and restart.";
+    addLog(`[Console] ${msg}`);
+    return { ok: false, msg };
+  }
+
   if (cmd === "/help") {
     const lines = [
       "Available commands:",
@@ -2306,7 +2368,7 @@ function sendConsoleCommand(command) {
       "  /stop          Stop the bot",
       "  /say <text>    Chat in-game",
       "  /<anything>    Send any Minecraft command",
-      "  <text>         Send plain chat",
+      "  <text>         Send plain chat (this box is not a shell)",
     ];
     lines.forEach((line) => addLog(`[Console] ${line}`));
     return { ok: true, msg: lines.join("\n") };
@@ -2552,9 +2614,11 @@ function renderDashboard(state) {
     </div>
     <div class="row" style="margin-top:10px">
       <input id="cmd" class="btn ghost" style="flex:2 1 240px;text-align:left;cursor:text"
-             placeholder="say Hello  ·  /list  ·  /pos" autocomplete="off">
+             placeholder="chat: hello  ·  /say hi  ·  /list  ·  /pos" autocomplete="off">
       <button class="btn" id="send">Send</button>
     </div>
+    <p class="status-detail" style="margin:6px 0 0">Text goes to Minecraft chat; anything starting with <code>/</code> is a command.
+      This is not a shell — <code>npm install</code> runs when the server starts.</p>
     <div id="result" class="status-detail" style="margin-top:10px"></div>
   </div>
 
@@ -3557,6 +3621,8 @@ const exported = {
   resolveRunMode,
   validateBackendUrl,
   // pure helpers (unit tested)
+  chatGapMs,
+  pickChatMessage,
   computeBackoff,
   computeDuplicateLoginDelay,
   shouldForceLogin,

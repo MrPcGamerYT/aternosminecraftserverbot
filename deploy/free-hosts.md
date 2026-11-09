@@ -569,13 +569,45 @@ look like the banned list:
 
 | What in the config | How a host reads it | Fix |
 | --- | --- | --- |
-| `utils."chat-messages"` with `repeat: true` — five messages every 120 s, including "I will Ban You!" | chat spam; also a fast way to get banned by the Minecraft server | `"enabled": false` (presets in `settings.json`) |
+| `utils."chat-messages"` with `repeat: true` and a gap under ~2 minutes, or a line like "I will Ban You!" | chat spam, and a fast way to get banned by the Minecraft server | keep gaps at 300 s or more, delete threats — `npm run doctor` checks both |
 | A reconnect loop (the old 90 s watchdog bug, `probe-not-ready` storms) | "undue strain … on third-party servers" | update `index.js`; verified fixed in `0b31854` |
 | Two servers, or a second account after a suspension | ban evasion — the account is terminated and so is the replacement | one account, one server |
 
 `npm run doctor` now warns about the first one:
 `[warn] Chat automation: repeating 5 message(s) every 120s — hosts and Minecraft
 servers call this spam`.
+
+### Chat: wanted, but at a human pace
+
+Talking is the single most human-looking thing this bot does, and on a shared
+server it is the difference between "someone is AFK" and "a bot is farming".
+It is also the easiest way to look like a spambot, so the code does three things:
+
+| Rule | Why |
+| --- | --- |
+| every gap is **60-140%** of `repeat-delay`, 5 s floor | a fixed 120 s timer is the clearest bot signature there is |
+| a line is **never sent twice in a row** | round-robin through a 5-line list repeats visibly |
+| `"only-when-players-online": true` | no monologues on an empty server, where nobody can read them anyway |
+
+A setting that looks human on a small server:
+
+```json
+"chat-messages": {
+  "enabled": true,
+  "repeat": true,
+  "repeat-delay": 420,
+  "only-when-players-online": true,
+  "messages": ["brb", "afk a bit", "lol", "back"]
+}
+```
+
+That is a line every 4-10 minutes while someone else is online: nothing a host
+would call spam, nothing a server would call a bot.
+
+**Honest limit:** chat does not fool the hosting provider. Aternos decides about
+AFK bots from connection behaviour and their own rules, not from whether the
+account types "brb" — so a suspended Aternos server stays suspended. What chat
+buys you is that other players and server staff treat the account as a person.
 
 ### Your Minecraft server can suspend you too
 
@@ -597,6 +629,56 @@ first.
 4. If the bot itself is what they object to, move to a host where a 24/7 client is
    unambiguously the product: a VM (section 3), Termux (section 4), or a paid VPS
    (section 5).
+
+## 12. Lunafy (`panel.lunafy.run`)
+
+Lunafy is a **Discord-bot** host on Pterodactyl. The bot runs fine there; the
+dashboard does not, and it is cheaper to know that before uploading.
+
+| | Free server |
+| --- | --- |
+| RAM / CPU / disk | 256 MB, 0.5 vCPU, 512 MB (their pricing page; some marketing pages say 512 MB — trust what the panel shows) |
+| Renewal | every 7 days, one click |
+| Card | not needed |
+| Open port | **no** — "additional servers and **open ports** are paid" |
+| Web servers | **not allowed** by their terms |
+| Other | your free server is deleted if it expires; you must stay in their Discord |
+
+### The dashboard cannot be reached on the free plan
+
+No allocation means no `http://IP:PORT` for you. Buying a port from them turns
+the dashboard back on (set `DASHBOARD_PASSWORD` first, the port is public), but on
+the free plan the URL does not exist and their terms call a web server a
+violation — do not try to work around it with a tunnel.
+
+### You can still talk, from the panel console
+
+The dashboard text box and the panel console go to the same function: text
+becomes Minecraft chat, `/something` becomes a Minecraft command.
+
+| You type in the **Console** tab | Result |
+| --- | --- |
+| `hello` | says `hello` in game |
+| `/say hi` | says `hi` in game (same thing) |
+| `/list` | runs `/list` in game |
+| `/status` | connection state and session uptime |
+| `/pos` | bot coordinates |
+| `npm install` | refused: *"npm is a shell command — this box only sends Minecraft chat"* |
+
+That console is the process's stdin. `npm install` and `node doctor.js` typed
+there do nothing; dependencies install when the server starts, and to run the
+doctor you set `MAIN_FILE=doctor.js` in **Startup** and restart.
+
+### Upload checklist for Lunafy
+
+1. **Startup → Node.js** egg, `MAIN_FILE=index.js`, `NODE_OPTIONS=--max-old-space-size=192`.
+2. Upload the ZIP, unzip **into the container root** (no extra folder), `npm ci --omit=dev`.
+3. `settings.json` keeps the humanised chat from section 11.
+4. No `PORT` needed — with no allocation there is nothing to serve, and the app
+   starts either way.
+5. Ask in their Discord whether a Minecraft AFK client is welcome. Their whole
+   pitch is Discord bots, their terms only rule out web servers, but SillyDev
+   suspension stories start with assuming.
 
 ## What not to do on the next host
 
