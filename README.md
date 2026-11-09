@@ -11,7 +11,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 ```
 npm install
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 119 tests, no framework, no network
+npm run test:all   # 120 tests, no framework, no network
 ```
 
 ---
@@ -463,7 +463,7 @@ Keep it to **one** bot instance per username.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 8 suites (119 tests)
+npm run test:all          # syntax + all 8 suites (120 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -475,7 +475,7 @@ npm run test:all          # syntax + all 8 suites (119 tests)
 | `test-provider.js` | 21 | Status map 0–10, token exclusivity, base URL scheme, start/stop/restart paths, error surfacing, token scrubbing, endpoint wiring. |
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
-| `test-serverless.js` | 20 | The Vercel/Lambda entry: callable export, warning-free `vercel.json` + bounded `engines`, static-output hygiene, routing, no bot started, every page 200, honest banner, warm-handler reuse, POST bodies, proxying, 502 on a dead backend, plus the degraded paths (stripped `index.js`, module that throws, backend still reachable) and an import/export consistency check. |
+| `test-serverless.js` | 21 | The Vercel/Lambda entry: callable export, warning-free `vercel.json` + bounded `engines`, static-output hygiene, routing, no bot started, every page 200, honest banner, warm-handler reuse, POST bodies, proxying, 502 on a dead backend, plus the degraded paths (stripped `index.js`, module that throws, backend still reachable) and an import/export consistency check. |
 
 The suites use a 40-line harness (`tests/harness.js`) on top of `node:assert`.
 They start real local HTTP servers where behaviour matters, and they never touch
@@ -529,12 +529,14 @@ on an always-on host and set `BOT_BACKEND_URL` here.
 **The URL shows raw JavaScript (`"use strict"; const fs = require(...)`)**
 That project is deployed as a **static site**, so `/` resolved to `index.js` and
 Vercel served the source as text. Nothing in the file structure prevented it —
-that is the bug this repo now fixes on two fronts:
+that is the bug this repo now fixes on three fronts:
 
+* `index.html` sits at the **repository root** — what any static host serves at
+  `/` — so even a project that ignores `vercel.json` gets the page;
 * `public/index.html` is the only published static file
-  (`outputDirectory: "public"` in `vercel.json`), so `index.js`, `settings.json`
-  and friends have no URL at all in a static deployment, and `/` renders a status
-  shell that queries `/status/light`;
+  (`outputDirectory: "public"`) for projects that do honour it, so `index.js`,
+  `settings.json` and friends have no URL at all;
+* `/` renders a status shell that queries `/status/light`;
 * when the function is deployed properly, `rewrites` send every path to
   `api/index.js` and the static file is never reached.
 

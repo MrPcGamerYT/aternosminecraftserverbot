@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Minecraft AFK Bot — status</title>
+<!--
+  Static entry point (canonical copy lives at the repository root, with an
+  identical copy in public/ so both a root-served and an outputDirectory-served
+  deployment get it).
+
+  Why this file exists: if this repository is deployed as a *static* Vercel
+  project (no functions, no build), visitors used to land on the raw source of
+  index.js. This page is self-contained — no external assets, no build step —
+  and does the most useful thing a static page can:
+
+    * if /status/light answers with JSON, it renders the live status;
+    * otherwise it explains, honestly, that a static/serverless deployment
+      cannot run the bot and how to point it at an always-on instance.
+
+  When the project *is* configured correctly, vercel.json rewrites every path
+  to /api/index.js and this file is never served. It is a safety net, not the
+  dashboard.
+-->
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(1200px 600px at 50% -20%,#16202b,#0b0f14 60%);
+    color:#e8eef5;font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    padding:24px}
+  main{width:100%;max-width:560px}
+  header{margin-bottom:18px}
+  h1{margin:0;font-size:22px;letter-spacing:-.01em}
+  .sub{color:#8b98a5;font-size:13px;margin:6px 0 0}
+  .card{background:#131a22;border:1px solid #222c37;border-radius:12px;padding:20px;margin-bottom:12px}
+  .status{display:flex;align-items:center;gap:12px}
+  .dot{width:12px;height:12px;border-radius:50%;background:#67737f;flex:none;
+    box-shadow:0 0 0 4px rgba(103,115,127,.16);transition:background .3s,box-shadow .3s}
+  .dot.on{background:#3fb950;box-shadow:0 0 0 4px rgba(63,185,80,.16)}
+  .dot.off{background:#f85149;box-shadow:0 0 0 4px rgba(248,81,73,.16)}
+  .dot.warn{background:#d29922;box-shadow:0 0 0 4px rgba(210,153,34,.16)}
+  .label{font-size:17px;font-weight:700}
+  .detail{color:#8b98a5;font-size:13px;margin-top:2px;word-break:break-word}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:14px}
+  .stat{background:#182028;border:1px solid #222c37;border-radius:10px;padding:12px 14px}
+  .stat dt{font-size:11px;color:#8b98a5;text-transform:uppercase;letter-spacing:.06em;margin:0 0 5px}
+  .stat dd{margin:0;font-size:15px;font-weight:650;word-break:break-word}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#8b98a5;margin:22px 0 10px}
+  p{color:#8b98a5;line-height:1.6;font-size:13.5px;margin:0 0 10px}
+  ul{color:#8b98a5;line-height:1.7;font-size:13.5px;padding-left:20px;margin:0}
+  code{background:#0a0e13;border:1px solid #222c37;border-radius:6px;padding:1px 6px;
+    font-size:12.5px;color:#c3ced9}
+  a{color:#58a6ff}
+  .hidden{display:none}
+  footer{color:#67737f;font-size:12px;text-align:center;margin-top:20px}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Minecraft AFK Bot</h1>
+    <p class="sub">Deployment status</p>
+  </header>
+
+  <section class="card">
+    <div class="status">
+      <div class="dot" id="dot"></div>
+      <div>
+        <div class="label" id="label">Checking…</div>
+        <div class="detail" id="detail">Contacting the bot</div>
+      </div>
+    </div>
+    <div class="grid hidden" id="stats">
+      <dl class="stat"><dt>Session</dt><dd id="s-session">—</dd></dl>
+      <dl class="stat"><dt>Server</dt><dd id="s-server">—</dd></dl>
+      <dl class="stat"><dt>Players</dt><dd id="s-players">—</dd></dl>
+    </div>
+  </section>
+
+  <section class="card hidden" id="explain">
+    <p><strong>No bot is running in this deployment.</strong></p>
+    <p>A static site or serverless function cannot hold a Minecraft TCP session
+       open, so the bot has to live on an always-on host.</p>
+    <h2>Get the live dashboard here</h2>
+    <ul>
+      <li>Deploy the bot on Render, Koyeb, Fly or a VPS
+          (<code>render.yaml</code>, <code>Dockerfile</code> and <code>Procfile</code>
+          are in the repository).</li>
+      <li>In Vercel → Settings → Environment Variables, add
+          <code>BOT_BACKEND_URL=https://your-always-on-bot</code>.</li>
+      <li>Redeploy. This page then proxies to the real dashboard.</li>
+    </ul>
+  </section>
+
+  <footer><a href="https://github.com/MrPcGamerYT/aternosminecraftserverbot">source &amp; setup guide</a></footer>
+</main>
+<script>
+(function () {
+  var dot = document.getElementById('dot');
+  var label = document.getElementById('label');
+  var detail = document.getElementById('detail');
+  var stats = document.getElementById('stats');
+  var explain = document.getElementById('explain');
+
+  function setState(cls, text, note) {
+    dot.className = 'dot' + (cls ? ' ' + cls : '');
+    label.textContent = text;
+    detail.textContent = note || '';
+  }
+
+  function render(data) {
+    if (data.connected) setState('on', 'Connected', data.statusDetail || 'Playing');
+    else if (data.policyBlocked) setState('warn', 'Stopped (policy block)', data.statusDetail || '');
+    else setState('off', data.statusLabel || 'Disconnected', data.statusDetail || '');
+
+    document.getElementById('s-session').textContent = data.sessionUptime || '—';
+    document.getElementById('s-server').textContent = data.server || 'not configured';
+    document.getElementById('s-players').textContent = data.players
+      ? (data.players.online + (data.players.max ? ' / ' + data.players.max : ''))
+      : 'unknown';
+    stats.classList.remove('hidden');
+  }
+
+  // 1) Is there a real bot API behind this domain?
+  fetch('/status/light', { headers: { Accept: 'application/json' }, cache: 'no-store' })
+    .then(function (res) {
+      var type = res.headers.get('content-type') || '';
+      if (!res.ok || type.indexOf('json') === -1) throw new Error('no api');
+      return res.json();
+    })
+    .then(function (data) {
+      if (data && typeof data.connected === 'boolean') {
+        render(data);
+        return;
+      }
+      throw new Error('unexpected payload');
+    })
+    .catch(function () {
+      // 2) Nothing usable: this is a static deployment. Say so plainly.
+      setState('warn', 'Static deployment', 'This URL serves files only — no bot process is running here.');
+      explain.classList.remove('hidden');
+    });
+})();
+</script>
+</body>
+</html>

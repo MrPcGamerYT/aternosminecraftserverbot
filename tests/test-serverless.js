@@ -407,7 +407,23 @@ test("17. a static deployment shows a page, never source code", async () => {
   assert.ok(!/^\s*("use strict"|const |function \w+\()/.test(html));
 });
 
-test("18. nothing at the web root can serve a source file", () => {
+test("18. a root-served static deployment gets the page too", () => {
+  // Vercel can serve the repository root directly (no outputDirectory honoured)
+  // when a project was created as a static site. Without a root index.html,
+  // "/" resolves to the first file alphabetically -- index.js.
+  const rootPage = path.join(ROOT, "index.html");
+  assert.ok(fs.existsSync(rootPage), "the repo root needs an index.html for static hosting");
+  assert.equal(
+    fs.readFileSync(rootPage, "utf8"),
+    fs.readFileSync(path.join(ROOT, "public", "index.html"), "utf8"),
+    "root and public/ copies must not drift",
+  );
+  const html = fs.readFileSync(rootPage, "utf8");
+  assert.ok(!/<script[^>]+src=/i.test(html), "no external scripts");
+  assert.ok(html.includes("/status/light"), "it queries the live API");
+});
+
+test("19. nothing at the web root can serve a source file", () => {
   const config = JSON.parse(fs.readFileSync(path.join(ROOT, "vercel.json"), "utf8"));
 
   // The static output directory must exist and contain ONLY the shell page.
@@ -416,6 +432,11 @@ test("18. nothing at the web root can serve a source file", () => {
   assert.equal(config.outputDirectory, "public");
   const published = fs.readdirSync(path.join(ROOT, "public"));
   assert.deepEqual(published, ["index.html"], `public/ must stay a single page, found ${published.join(", ")}`);
+  // ...and the root copy is the same file, so neither can be replaced by source.
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, "index.html"), "utf8"),
+    fs.readFileSync(path.join(ROOT, "public", "index.html"), "utf8"),
+  );
 
   // No source file or config may live there.
   const forbidden = ["index.js", "settings.json", "package.json", "api", "tests", "node_modules", ".env"];
