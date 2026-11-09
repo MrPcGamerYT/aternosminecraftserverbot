@@ -1,0 +1,34 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+#
+# The dashboard and the bot run in the SAME process, so one always-on
+# web service is all you need. Keep it to a single instance: a second
+# copy would fight over the Minecraft username (the /tmp lease is
+# per-container, so it cannot protect you across instances).
+services:
+  - type: web
+    name: minecraft-afk-bot
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    numInstances: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # RENDER_EXTERNAL_URL is injected automatically and is used by the
+      # self-ping keep-alive; no PUBLIC_URL is required on Render.
+      - key: SELF_PING_INTERVAL_MS
+        value: "240000"
+      # Leave this empty unless the dashboard lives on another host and
+      # should proxy every request to this always-on instance.
+      - key: BOT_BACKEND_URL
+        value: ""
+      # Optional: wake the Minecraft server through the host's API.
+      # Never put the token in settings.json.
+      - key: EXAROTON_TOKEN
+        sync: false
+      - key: EXAROTON_SERVER_ID
+        sync: false

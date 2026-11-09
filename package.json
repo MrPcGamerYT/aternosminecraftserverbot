@@ -1,12 +1,32 @@
 {
   "name": "minecraft-afk-bot",
-  "version": "2.2",
-  "description": "Robust AFK bot for Minecraft servers with infinite uptime.",
+  "version": "2.11.0",
+  "description": "Self-healing Minecraft AFK bot with an honest dashboard: probe-gated reconnects, watchdogs, single-instance lease, policy-ban handling and optional provider/serverless support.",
   "main": "index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node index.js",
-    "test": "node --check index.js"
+    "test": "node --check index.js && node --check probe.js && node --check watcher.js && node --check provider.js && node --check leaveRejoin.js && node --check logger.js",
+    "test:lifecycle": "node tests/test-lifecycle.js",
+    "test:duplicate-instance": "node tests/test-duplicate-instance.js",
+    "test:mirror": "node tests/test-mirror.js",
+    "test:watcher-policy": "node tests/test-watcher-policy.js",
+    "test:provider": "node tests/test-provider.js",
+    "test:proxy": "node tests/test-proxy.js",
+    "test:keepalive": "node tests/test-keepalive.js",
+    "test:all": "npm run test && npm run test:lifecycle && npm run test:duplicate-instance && npm run test:mirror && npm run test:watcher-policy && npm run test:provider && npm run test:proxy && npm run test:keepalive"
   },
+  "keywords": [
+    "minecraft",
+    "afk",
+    "mineflayer",
+    "bot",
+    "aternos",
+    "exaroton"
+  ],
   "author": "Lamgerr",
   "license": "MIT",
   "dependencies": {

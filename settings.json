@@ -8,11 +8,11 @@
   "server": {
     "ip": "soloplayzaternos123.aternos.me",
     "port": 52076,
-    "version": "1.21.1",
+    "version": false,
     "try-creative": false
   },
   "position": {
-    "enabled": true,
+    "enabled": false,
     "x": 0,
     "y": 100,
     "z": 0
@@ -20,31 +20,47 @@
   "utils": {
     "auto-auth": {
       "enabled": false,
-      "password": "SoloPlayz"
+      "password": ""
     },
     "anti-afk": {
       "enabled": true,
-      "sneak": true
+      "sneak": false
     },
     "chat-messages": {
-      "enabled": true,
-      "repeat": true,
+      "enabled": false,
+      "repeat": false,
       "repeat-delay": 120,
       "messages": [
-        "I'm a regular player",
-        "Subscribe to SoloPlayz!",
-        "Want Cheap Premium MC Server? https://discord.gg/VRMUnDkf95"
+        "I'm a regular player"
       ]
     },
     "chat-log": true,
     "auto-reconnect": true,
     "auto-reconnect-delay": 2000,
-    "max-reconnect-delay": 120000
+    "max-reconnect-delay": 120000,
+    "force-login-after-probes": 6,
+    "duplicate-login-backoff-min": 120000,
+    "duplicate-login-backoff-max": 180000,
+    "probe-timeout": 6000,
+    "probe-cache-ms": 5000,
+    "leave-rejoin": {
+      "enabled": false,
+      "min-stay-ms": 300000,
+      "max-stay-ms": 900000
+    },
+    "watchdog": {
+      "enabled": true,
+      "silence-timeout": 90000,
+      "spawn-timeout": 120000,
+      "stall-timeout": 600000,
+      "stall-grace": 120000,
+      "tick-interval": 5000
+    }
   },
   "movement": {
     "enabled": true,
     "circle-walk": {
-      "enabled": true,
+      "enabled": false,
       "radius": 4,
       "speed": 3000
     },
@@ -53,19 +69,19 @@
       "interval": 5000
     },
     "random-jump": {
-      "enabled": true,
+      "enabled": false,
       "interval": 10000
     }
   },
   "modules": {
-    "avoidMobs": true,
-    "combat": true,
+    "avoidMobs": false,
+    "combat": false,
     "beds": false,
     "chat": true,
     "console-commands": true
   },
   "combat": {
-    "attack-mobs": true,
+    "attack-mobs": false,
     "auto-eat": true
   },
   "beds": {
@@ -82,6 +98,13 @@
     }
   },
   "chat": {
-    "respond": true
+    "respond": false
+  },
+  "provider": {
+    "enabled": true,
+    "exaroton-server-id": "",
+    "exaroton-server-address": "",
+    "status-cache-ms": 15000,
+    "manual-start-hint": "No provider API is configured. Start the server in your host's panel \u2014 the bot joins automatically once the port answers."
   }
 }
