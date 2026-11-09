@@ -504,6 +504,50 @@ Free, no card, real HTTPS on a real domain — the one free option that fixes th
 `alwaysdata` assigns the port through the `PORT` variable, which this app already
 reads — no extra configuration.
 
+## 10. Even more hosts
+
+### 512 MB free panels (the useful class)
+
+This bot needs roughly 150 MB to run; 100 MB panels cannot hold it, so anything
+under 256 MB is not worth trying.
+
+| Host | Free RAM | CPU | Renewal | Notes |
+| --- | --- | --- | --- | --- |
+| **Lunafy** (`lunafy.run`) | **512 MB** | 0.5 vCPU | every 7 days, one click | best published free specs in this class |
+| **HeavenCloud** (`heavencloud.in`) | **512 MB** | 25% | every 7 days | 712 MB disk, Miami/Houston/Falkenstein |
+| **Daki** (`daki.cc`) | 512 MB | 50% | runtime extended by watching ads | no card |
+| **Bot-Hosting.net** | 256 MB | 25% | every 4 days | 512 MB disk |
+| **VisiHost / NexCloud** (India) | 256 MB | shared | varies | Hindi support, nearest region |
+| **FreeGameHost** | 256 MB | 25% | every 12 h | worst upkeep of the list |
+| ~~Pella~~ | 100 MB | 0.1 | — | **too small** — mineflayer will be OOM-killed |
+
+All of them are Pterodactyl, so the steps in section 2 apply unchanged.
+
+### Free VMs on the big clouds (card needed, but no sleep and no queue)
+
+| Provider | Always-free shape | Card | Catch |
+| --- | --- | --- | --- |
+| **Oracle Cloud** | 4 ARM cores / 24 GB (Ampere A1) | yes, ₹0 charged | capacity can be full; signup sometimes refused |
+| **Google Cloud** | `e2-micro`, 1 vCPU / 1 GB, 30 GB disk in `us-central1` / `us-west1` / `us-east1` | yes | one VM per month, US regions only, check current terms |
+| **Azure** | `B1s`, 750 h/month for 12 months | yes | 12 months, not forever |
+| **AWS** | `t3.micro` / `t4g.micro`, 750 h/month for 12 months | yes | 12 months, not forever |
+
+Deploy on any of them with `sudo bash deploy/vm-install.sh` or
+`sudo docker compose up -d --build` (section 3).
+
+### Cheap paid, zero rules
+
+| Provider | Price | What you get |
+| --- | --- | --- |
+| **SillyDev paid** | 75p/month | doubles the free allocation (512 MB) — same panel you already know |
+| **Botkeep Plus** | €1.99/month | 3 GB RAM, 5 slots, no queue |
+| **Hetzner** | €3.79/month | 2 GB / 1 vCPU, EU, real root |
+| **RackNerd** | ~$11/year | 1 GB, US, the cheapest usable VPS |
+| **VisiHost** (India) | ₹39–99/month | Mumbai/Noida nodes |
+
+For a bot that must stay online, one of these removes every free-tier problem at
+once: no queue, no spin-down, no renewal clicks, no ad watching, no suspension.
+
 ## What not to do on the next host
 
 * **Do not deploy this on another PaaS free tier with the self-ping on.** Render,
