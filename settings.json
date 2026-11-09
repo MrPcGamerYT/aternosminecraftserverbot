@@ -1,13 +1,13 @@
 {
   "name": "AFK Bot",
   "bot-account": {
-    "username": "SoloCloudHosting",
+    "username": "OfflinePlayer",
     "password": "",
     "type": "offline"
   },
   "server": {
-    "ip": "soloplayzaternos123.aternos.me",
-    "port": 52076,
+    "ip": "ZLAG.aternos.me",
+    "port": ZLAG.aternos.me,
     "version": "1.21.1",
     "try-creative": false
   },
@@ -20,7 +20,7 @@
   "utils": {
     "auto-auth": {
       "enabled": false,
-      "password": "SoloPlayz"
+      "password": "ZLAG"
     },
     "anti-afk": {
       "enabled": true,
@@ -31,9 +31,11 @@
       "repeat": true,
       "repeat-delay": 120,
       "messages": [
-        "I'm a regular player",
-        "Subscribe to SoloPlayz!",
-        "Want Cheap Premium MC Server? https://discord.gg/VRMUnDkf95"
+        "Don't Come at me",
+        "I will Ban You!",
+        "Don't try to think That",
+        "you can't still close",
+        "lwl"
       ]
     },
     "chat-log": true,
