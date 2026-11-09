@@ -27,12 +27,11 @@
       "sneak": true
     },
     "chat-messages": {
-      "enabled": true,
-      "repeat": true,
+      "enabled": false,
+      "repeat": false,
       "repeat-delay": 120,
       "messages": [
         "Don't Come at me",
-        "I will Ban You!",
         "Don't try to think That",
         "you can't still close",
         "lwl"
@@ -109,6 +108,6 @@
     "exaroton-server-id": "",
     "exaroton-server-address": "",
     "status-cache-ms": 15000,
-    "manual-start-hint": "No provider API is configured. Start the server in your host's panel — the bot joins automatically once the port answers."
+    "manual-start-hint": "No provider API is configured. Start the server in your host's panel \u2014 the bot joins automatically once the port answers."
   }
 }
