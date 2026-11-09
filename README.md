@@ -11,7 +11,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 ```
 npm install
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 99 tests, no framework, no network
+npm run test:all   # 111 tests, no framework, no network
 ```
 
 ---
@@ -114,6 +114,8 @@ Environment variables always win over `settings.json`.
 | `provider.js` | exaroton client, status mapping, strict token handling. |
 | `leaveRejoin.js` | Optional scheduled leave; **never** reconnects on its own. |
 | `logger.js` | In-memory ring buffer + console fan-out. |
+| `api/index.js` | Serverless entry point — exports the express handler Vercel invokes. Never starts a bot. |
+| `vercel.json` | Routes `/(.*)` → `api/index.js`, declares the function budget, no-store on status routes. |
 
 There is exactly **one** owner for each timer: `timers.reconnect`, one watchdog
 per connection attempt, one keep-alive interval, one lease renewal.
@@ -296,6 +298,10 @@ do; it never pretends to have done it.
 | POST | `/stop` | Stop the bot until `/start`. |
 | POST | `/command` | `{ "command": "/list" }` — `/help`, `/pos`, `/status`, `/probe`, `/start`, `/stop`, or anything sent in-game. |
 
+All of the above work unchanged inside a serverless function (they are served by
+the same express app); in proxy mode they are forwarded to the always-on bot so
+the dashboard you look at is the real, live session.
+
 ---
 
 ## Dashboard
@@ -413,9 +419,27 @@ so a partial `settings.json` still boots.
   `HEALTHCHECK` on `/ping`). Build ignores `.env`, `tests`, docs via `.dockerignore`.
 * **Procfile / nixpacks** — `Procfile` (`web: node index.js`) and `nixpacks.toml`
   (Node 20, `npm ci --omit=dev`, `node --check` build step) for Railway/Coolify.
-* **Vercel / Netlify / Lambda** — do not run a bot here. Deploy an always-on
-  instance and set `BOT_BACKEND_URL` on the serverless deployment; the dashboard
-  will proxy to it.
+* **Vercel** — supported as a *dashboard only*. `api/index.js` is the request
+  handler and `vercel.json` routes every path to it, so the page renders instead
+  of returning `500 FUNCTION_INVOCATION_FAILED`:
+
+  1. Import the repo on Vercel (framework preset: **Other**, no build command —
+     `vercel.json` sets `framework: null`).
+  2. Deploy an always-on bot instance (Render/Koyeb/Fly/VPS) — a function cannot
+     hold a Minecraft TCP session.
+  3. In **Project → Settings → Environment Variables** add
+     `BOT_BACKEND_URL=https://your-always-on-bot.example.com` and redeploy.
+
+  With that variable set, the Vercel deployment proxies every request — dashboard,
+  logs, controls, `/command` — to the real bot, so the site shows the **live**
+  session. Without it, the deployment honestly reports
+  *"Serverless runtime detected — no bot can run here"* and never claims to be
+  connected. Requests are stateless between invocations, so `/start` and `/stop`
+  belong on the always-on instance (which is exactly where proxy mode sends them).
+
+* **Netlify / AWS Lambda** — the same handler works (`api/index.js` exports an
+  `(req, res)` function); point the platform's function route at it and set
+  `BOT_BACKEND_URL` the same way.
 
 Keep it to **one** bot instance per username.
 
@@ -425,7 +449,7 @@ Keep it to **one** bot instance per username.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 7 suites (99 tests)
+npm run test:all          # syntax + all 8 suites (111 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -437,6 +461,7 @@ npm run test:all          # syntax + all 7 suites (99 tests)
 | `test-provider.js` | 21 | Status map 0–10, token exclusivity, base URL scheme, start/stop/restart paths, error surfacing, token scrubbing, endpoint wiring. |
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
+| `test-serverless.js` | 12 | The Vercel/Lambda entry: callable export, `vercel.json` routing, no bot started, every page 200, honest banner, warm-handler reuse, POST bodies, proxying, 502 on a dead backend. |
 
 The suites use a 40-line harness (`tests/harness.js`) on top of `node:assert`.
 They start real local HTTP servers where behaviour matters, and they never touch
@@ -486,6 +511,14 @@ and will likely escalate. Change the behaviour (or the server), then press Start
 **Dashboard says the bot is stopped on Vercel**
 Correct — a serverless function cannot hold a Minecraft TCP connection. Run the bot
 on an always-on host and set `BOT_BACKEND_URL` here.
+
+**Vercel shows `500: INTERNAL_SERVER_ERROR` / `FUNCTION_INVOCATION_FAILED`**
+The deployment has no request handler. This repo ships one at `api/index.js`
+plus the `vercel.json` rewrite; make sure the project's **Root Directory** is the
+repository root (not a subfolder), that `index.js`, `api/index.js` and
+`settings.json` are committed, and that the build ran `npm install`. Check the
+function logs with `vercel logs <deployment-url>`; the handler logs its mode on
+cold start (`[Serverless] Request handler created (mode: …)`).
 
 **Server buttons return 409 "reporting mode"**
 No provider API is configured. Set `EXAROTON_TOKEN` + `EXAROTON_SERVER_ID`, or start
