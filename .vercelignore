@@ -1,0 +1,14 @@
+# Keep the function bundle small: the serverless build needs node_modules,
+# the JS sources and settings.json — nothing else.
+.git
+tests
+*.log
+.env
+.env.*
+Dockerfile
+.dockerignore
+render.yaml
+Procfile
+nixpacks.toml
+dependabot.yml
+coverage
