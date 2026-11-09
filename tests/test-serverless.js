@@ -63,8 +63,32 @@ test("2. vercel.json routes everything into that function", () => {
   const config = JSON.parse(fs.readFileSync(path.join(ROOT, "vercel.json"), "utf8"));
   assert.deepEqual(config.rewrites, [{ source: "/(.*)", destination: "/api/index.js" }]);
   assert.equal(config.framework, null);
-  assert.ok(config.functions["api/index.js"], "the function is declared with a memory/time budget");
+  assert.ok(config.functions["api/index.js"], "the function is declared with a time budget");
   assert.ok(config.functions["api/index.js"].maxDuration > 0);
+});
+
+test("2b. vercel.json contains nothing Vercel warns about", () => {
+  const config = JSON.parse(fs.readFileSync(path.join(ROOT, "vercel.json"), "utf8"));
+  const fn = config.functions["api/index.js"];
+  // "Provided `memory` setting in `vercel.json` is ignored on Active CPU billing."
+  assert.equal(fn.memory, undefined, "memory is Vercel-plan dependent: it warns, and silently does nothing");
+  // maxDuration is honoured on every plan, so it stays.
+  assert.equal(fn.maxDuration, 30);
+  // No stray properties that only exist to satisfy a plan we can't detect.
+  assert.deepEqual(Object.keys(fn).sort(), ["maxDuration"]);
+});
+
+test("2c. engines pins the Node major instead of an open-ended range", () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  const range = pkg.engines && pkg.engines.node;
+  assert.ok(range, "engines.node must be set");
+  // ">=18" makes Vercel warn and auto-upgrade majors under us.
+  assert.ok(!/^>=?\s*\d+(\.\d+)*$/.test(range.trim()), `"${range}" auto-upgrades to future majors`);
+  assert.match(range, /<\d+/, "the range needs an upper bound");
+  // ...but it must still allow a modern LTS the bot is tested on.
+  const [lower, upper] = range.replace(/[><=]/g, " ").trim().split(/\s+/);
+  assert.ok(Number(lower) >= 18, `${lower} is below the documented minimum`);
+  assert.ok(Number(upper) >= 22, `the ceiling (${upper.split(".")[0]}) is too low for current LTS`);
 });
 
 test("3. no bot is started by the serverless entry (it cannot be)", () => {

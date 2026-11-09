@@ -6,7 +6,6 @@
   "installCommand": "npm ci --omit=dev || npm install --omit=dev",
   "functions": {
     "api/index.js": {
-      "memory": 1024,
       "maxDuration": 30
     }
   },
