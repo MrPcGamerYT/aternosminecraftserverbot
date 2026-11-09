@@ -11,7 +11,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 ```
 npm install
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 120 tests, no framework, no network
+npm run test:all   # 132 tests, no framework, no network
 ```
 
 ---
@@ -417,15 +417,56 @@ so a partial `settings.json` still boots.
 
 ## Deploying
 
-* **Render** — `render.yaml` (single instance, `/health` check). `RENDER_EXTERNAL_URL`
-  feeds the keep-alive automatically.
+### One host runs everything
+
+The dashboard and the bot are **one process**, so an always-on host is the whole
+deployment: `npm start`, open the port, press Start. No second service, no
+`BOT_BACKEND_URL`, no proxy, nothing to keep in sync.
+
+```
+one always-on host  ──►  node index.js  ──►  dashboard + /start + /stop + bot
+                                              │
+                                              └──► Minecraft server (TCP, 24/7)
+```
+
+The **only** reason this repo mentions a second host is serverless: Vercel,
+Netlify and Lambda kill a function after 10–30 seconds, so a Minecraft TCP
+session cannot live there. That is a platform limit, not a missing setting. If
+your dashboard is on a serverless plan, the bot needs an always-on host and the
+function proxies to it; if your dashboard is on any always-on host, you need
+nothing else at all.
+
+* **Render free — $0, recommended** — `render.yaml` deploys **one** free web
+  service that runs the dashboard and the bot together. Nothing else to create.
+  What the free plan means for this bot:
+
+  | Free limit | Effect on the bot |
+  | --- | --- |
+  | 512 MB RAM / 0.1 CPU | Fine — the process idles around 70 MB and reaches ~100–130 MB after `minecraft-data` loads. `NODE_OPTIONS=--max-old-space-size=384` is set so a memory problem surfaces as a Node error, not a kernel OOM kill. |
+  | Spins down after 15 min without inbound traffic | The self-ping hits `/ping` every 4 min, so this never triggers. An outbound Minecraft connection does **not** count as traffic — the self-ping is what keeps the host awake. |
+  | 750 instance hours per workspace per month | One service awake 24/7 uses 720 h (30-day) / 744 h (31-day). Do not run a second free service in the same workspace, or Render suspends both until next month. |
+  | Render may restart a free service at any time | The bot connects on boot, so a restart is a short gap, not a dead bot. `/start` still works after it. |
+  | Ephemeral filesystem | Nothing is stored on disk. The `/tmp` lease is per-container by design. |
+  | Cold start ≈ 1 min after a spin-down | Only matters if the service ever sleeps; the self-ping normally prevents it. |
+
+  Render's own docs say free instances are not for production. For this bot that
+  means *expect the occasional restart*, not *expect it not to work*. If you want
+  no restarts, switch `plan: free` to `plan: starter` ($7/mo, same 512 MB) —
+  nothing else changes.
+
+* **Render paid / Koyeb / Fly / Railway** — the same single service; these never
+  sleep, so the self-ping becomes optional insurance rather than the thing that
+  keeps it alive.
 * **Docker** — `Dockerfile` (Node 20 Alpine, `tini` for clean signals, non-root user,
   `HEALTHCHECK` on `/ping`). Build ignores `.env`, `tests`, docs via `.dockerignore`.
 * **Procfile / nixpacks** — `Procfile` (`web: node index.js`) and `nixpacks.toml`
   (Node 20, `npm ci --omit=dev`, `node --check` build step) for Railway/Coolify.
-* **Vercel** — supported as a *dashboard only*. `api/index.js` is the request
-  handler and `vercel.json` routes every path to it, so the page renders instead
-  of returning `500 FUNCTION_INVOCATION_FAILED`:
+* **Vercel — optional, dashboard only.** Skip this entirely if you deployed on
+  Render/Docker/a VPS: the same process already serves the page. Only use Vercel
+  if you specifically want the dashboard on Vercel, in which case the bot still
+  has to run on one always-on host and Vercel proxies to it. `api/index.js` is
+  the request handler and `vercel.json` routes every path to it, so the page
+  renders instead of returning `500 FUNCTION_INVOCATION_FAILED`:
 
   1. Import the repo on Vercel (framework preset: **Other**, no build command —
      `vercel.json` sets `framework: null`).
@@ -439,8 +480,8 @@ so a partial `settings.json` still boots.
      * `maxDuration: 30` is kept because it is honoured on every plan;
      * `.npmrc` pins the install behaviour instead of relying on platform env.
 
-  2. Deploy an always-on bot instance (Render/Koyeb/Fly/VPS) — a function cannot
-     hold a Minecraft TCP session.
+  2. Deploy **one** always-on bot instance (Render free is enough — see above) —
+     a function cannot hold a Minecraft TCP session.
   3. In **Project → Settings → Environment Variables** add
      `BOT_BACKEND_URL=https://your-always-on-bot.example.com` and redeploy.
 
@@ -463,7 +504,7 @@ Keep it to **one** bot instance per username.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 8 suites (120 tests)
+npm run test:all          # syntax + all 9 suites (132 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -475,6 +516,7 @@ npm run test:all          # syntax + all 8 suites (120 tests)
 | `test-provider.js` | 21 | Status map 0–10, token exclusivity, base URL scheme, start/stop/restart paths, error surfacing, token scrubbing, endpoint wiring. |
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
+| `test-single-host.js` | 12 | The one-host promise, enforced: `render.yaml` has exactly **one** service, stays on `plan: free`, runs one instance of `node index.js`, keeps `BOT_BACKEND_URL` empty, caps the V8 heap under 512 MB, self-pings faster than Render's 15-min spin-down and health-checks `/health`; `Procfile`/`nixpacks`/`Dockerfile` agree on the port and the endpoint; the serverless entry never claims to start a bot. |
 | `test-serverless.js` | 21 | The Vercel/Lambda entry: callable export, warning-free `vercel.json` + bounded `engines`, static-output hygiene, routing, no bot started, every page 200, honest banner, warm-handler reuse, POST bodies, proxying, 502 on a dead backend, plus the degraded paths (stripped `index.js`, module that throws, backend still reachable) and an import/export consistency check. |
 
 The suites use a 40-line harness (`tests/harness.js`) on top of `node:assert`.
@@ -523,8 +565,14 @@ The server banned you for idling, automation, or ToS. Reconnecting will not help
 and will likely escalate. Change the behaviour (or the server), then press Start.
 
 **Dashboard says the bot is stopped on Vercel**
-Correct — a serverless function cannot hold a Minecraft TCP connection. Run the bot
-on an always-on host and set `BOT_BACKEND_URL` here.
+Correct — a serverless function cannot hold a Minecraft TCP connection. Either set
+`BOT_BACKEND_URL` to an always-on bot, or drop Vercel: `render.yaml` deploys the
+dashboard *and* the bot as one free service, and then the whole app lives on a
+single host.
+
+**Do I need a second host?**
+No, unless the dashboard is on Vercel/Netlify/Lambda. One always-on process runs
+the dashboard, the controls and the bot together.
 
 **The URL shows raw JavaScript (`"use strict"; const fs = require(...)`)**
 That project is deployed as a **static site**, so `/` resolved to `index.js` and

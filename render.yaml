@@ -1,29 +1,60 @@
 # Render blueprint — https://render.com/docs/blueprint-spec
 #
-# The dashboard and the bot run in the SAME process, so one always-on
-# web service is all you need. Keep it to a single instance: a second
-# copy would fight over the Minecraft username (the /tmp lease is
-# per-container, so it cannot protect you across instances).
+# ONE service, ONE process, ONE host. The dashboard, the controls and the bot
+# all live in the same Node process, so there is nothing else to deploy and no
+# BOT_BACKEND_URL to point anywhere. A second host is only ever needed if the
+# dashboard is put on a serverless platform (Vercel/Netlify/Lambda), because a
+# 30-second function cannot hold a Minecraft TCP session.
+#
+# Keep it to a single instance: a second copy would fight over the Minecraft
+# username (the /tmp lease is per-container, so it cannot protect you across
+# instances).
+#
+# `plan: free` costs $0 and is enough for this bot:
+#   * 512 MB RAM / 0.1 CPU  — the process sits around ~100 MB (see README);
+#   * spins down only after 15 min with no inbound HTTP request;
+#   * the self-ping below hits /ping every 4 min, so the 15 min window never
+#     closes and the bot stays awake;
+#   * 750 free instance hours a month cover one service running 24/7
+#     (720 h in a 30-day month, 744 h in a 31-day month).
+#
+# Trade-offs of free (all harmless here, but know them):
+#   * Render may restart a free service at any time — the bot reconnects on
+#     boot, so this shows up as a short gap, not a dead bot;
+#   * the filesystem is ephemeral — the /tmp lease is meant to be, nothing is
+#     stored on disk;
+#   * if the 750 hours are spent (e.g. a second free service in the same
+#     workspace), Render suspends it until next month;
+#   * Render's docs say not to use free instances for production apps.
+#
+# Want no restarts and no cold start? Change the plan to `starter` ($7/mo,
+# same 512 MB). Everything else stays identical.
 services:
   - type: web
     name: minecraft-afk-bot
     runtime: node
-    plan: starter
+    plan: free
     region: oregon
     buildCommand: npm ci --omit=dev
-    startCommand: npm start
+    startCommand: node index.js
     healthCheckPath: /health
     autoDeploy: true
     numInstances: 1
     envVars:
       - key: NODE_VERSION
         value: "20"
+      # Cap V8's heap so the container's 512 MB limit is hit by a clean Node
+      # error instead of by the kernel OOM killer. Node sizes its default heap
+      # from the host's memory, not from the cgroup limit.
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=384"
       # RENDER_EXTERNAL_URL is injected automatically and is used by the
       # self-ping keep-alive; no PUBLIC_URL is required on Render.
       - key: SELF_PING_INTERVAL_MS
         value: "240000"
-      # Leave this empty unless the dashboard lives on another host and
-      # should proxy every request to this always-on instance.
+      # Leave this empty. It only exists to proxy a *serverless* dashboard to an
+      # always-on bot; on this host the dashboard and the bot are the same
+      # process, so setting it would make the app proxy to itself.
       - key: BOT_BACKEND_URL
         value: ""
       # Optional: wake the Minecraft server through the host's API.
