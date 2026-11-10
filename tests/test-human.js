@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-human.js — behaviour that does not look like a cron
 //
-//   npm run test:human   (9 tests)
+//   npm run test:human   (11 tests)
 //
 // A ternos (and every other server) notices regularity: one action
 // every 45s, forever, is not something a person does. These tests
@@ -132,6 +132,33 @@ test("9. the modules that move and defend the bot are in the file", () => {
   for (const name of ["setupMovement", "setupPosition", "setupCombat", "setupBeds", "setupLeaveRejoinModule", "setupAutoAuth", "setupChatMessages", "setupAntiAfk", "setupChatResponder"]) {
     assert.ok(new RegExp(`function ${name}\\s*\\(`).test(source), `${name} is missing from index.js`);
   }
+});
+
+test("10. the first action after a join comes within 5-15s, not 90s", () => {
+  const first = Array.from({ length: 200 }, () => index.firstAntiAfkDelayMs());
+  assert.ok(Math.min(...first) >= 5000, `too early: ${Math.min(...first)}`);
+  assert.ok(Math.max(...first) <= 15000, `too late: ${Math.max(...first)}`);
+  // and it must hand over to the slower beat afterwards
+  assert.ok(index.nextAntiAfkDelayMs(() => 0) >= 20000);
+  const fs = require("fs");
+  const path = require("path");
+  const source = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+  const antiAfk = source.slice(source.indexOf("function setupAntiAfk"), source.indexOf("function setupHumanSchedule"));
+  assert.ok(/firstAntiAfkDelayMs\(\)/.test(antiAfk), "the first delay must be the short one");
+});
+
+test("11. a panel that pins Etc/UTC does not defeat settings.json", () => {
+  const { execFileSync } = require("child_process");
+  const path = require("path");
+  const run = (tz) =>
+    execFileSync(process.execPath, ["-e", "require('./index.js'); console.log(process.env.TZ);"], {
+      cwd: path.join(__dirname, ".."),
+      env: { ...process.env, TZ: tz },
+      encoding: "utf8",
+    }).trim();
+  assert.equal(run("Etc/UTC"), "Asia/Kolkata", "the panel's generic UTC loses");
+  assert.equal(run("UTC"), "Asia/Kolkata");
+  assert.equal(run("America/New_York"), "America/New_York", "a real choice from the panel wins");
 });
 
 run("human");

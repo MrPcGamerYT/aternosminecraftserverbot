@@ -937,6 +937,36 @@ cloudflared tunnel --url http://localhost:5000
 systemd case on a Linux box. The catch is honest: the machine must stay on, and
 power or internet cuts take the bot down with them.
 
+## 16. "Kicked from server." with no reason
+
+A kick whose text component is empty —
+
+```
+[Bot] Kicked: {"type":"compound","value":{"extra":{"type":"list","value":{"type":"string","value":["Kicked from server."]}},"text":{"type":"string","value":""}}}
+```
+
+— is the server's generic message. There is no reason in it because the server did
+not give one, so the bot cannot tell you why. What it *does* tell you is where to
+look:
+
+| Who kicked | What the console shows | What to do |
+| --- | --- | --- |
+| the Minecraft server (Aternos, a plugin, an anti-AFK check) | this empty message | read the server console / `logs/latest.log` on Aternos at that timestamp |
+| duplicate login (same username from two hosts) | "You logged in from another location" | run **one** instance; the lease is per machine, not global |
+| whitelist / ban | "You are not white-listed" / a ban screen | fix the server's whitelist or unban |
+| the panel restarting the container | connection drops, no kick message | look for "Server marked as running" above it |
+
+Two things narrow it down for free:
+
+1. **Timing.** A kick ~25-30 s after spawn, twice, with the same gap, is an idle
+   check or a scheduled task, not a random crash. The bot now makes its first move
+   5-15 s after joining, then continues on the 20-90 s beat.
+2. **The log on the other side.** Aternos keeps the server log; the kick line there
+   names the plugin or the reason even when the client's copy is empty.
+
+If the same kick keeps coming back, the honest next step is to run the bot on a
+server *you* control (Paper on a VM) where you can read `latest.log` as it happens.
+
 ## What not to do on the next host
 
 * **Do not deploy this on another PaaS free tier with the self-ping on.** Render,

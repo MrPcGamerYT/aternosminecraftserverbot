@@ -23,11 +23,14 @@ const os = require("os");
 // Time zone first, before anything can format a date: Node reads process.env.TZ
 // once and caches it, so setting it after the first Date is too late. Hosts
 // without a Variables tab get their zone from settings.json.
-if (!process.env.TZ) {
+const PANEL_TZ = process.env.TZ || "";
+const TZ_IS_GENERIC_UTC = /^(Etc\/UTC|UTC|GMT|Etc\/GMT|Etc\/UCT|UCT|Zulu)$/i.test(PANEL_TZ.trim());
+if (!PANEL_TZ || TZ_IS_GENERIC_UTC) {
   try {
     const rawSettings = JSON.parse(fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"));
     const wantedZone = String(rawSettings.timezone || "").trim();
-    if (wantedZone) process.env.TZ = wantedZone;
+    // A panel that pins Etc/UTC is not a choice the user made; settings.json is.
+    if (wantedZone && !/^(Etc\/UTC|UTC|GMT)$/i.test(wantedZone)) process.env.TZ = wantedZone;
   } catch (_err) {
     /* no settings.json yet, or it is being edited — the default zone is fine */
   }
@@ -2008,6 +2011,17 @@ function nextAntiAfkDelayMs(random = Math.random) {
 }
 
 /**
+ * The first action after a join: 5-15s.
+ *
+ * Servers with an idle-kick plugin (and Aternos' own checks) look at the first
+ * moments; a bot that stands perfectly still for a minute and a half looks
+ * exactly like what it is. After this, the slower 20-90s beat takes over.
+ */
+function firstAntiAfkDelayMs(random = Math.random) {
+  return pickRandomInt(5000, 15000, random);
+}
+
+/**
  * What the bot does on that tick. Weighted so the boring, low-risk actions
  * dominate: looking around and swinging are invisible to other players, while
  * jumping and sneaking move the body and are rarer.
@@ -2203,7 +2217,7 @@ function setupAntiAfk(bot) {
 
   // One jittered loop instead of three metronomes. Every tick decides whether
   // it is time for something, and what.
-  let nextAt = Date.now() + nextAntiAfkDelayMs();
+  let nextAt = Date.now() + firstAntiAfkDelayMs();
   addBotInterval(() => {
     if (!runtime.connectedAt) return;
     if (Date.now() < nextAt) return;
@@ -3731,7 +3745,13 @@ function printBanner() {
   if (envFileInfo && envFileInfo.loaded > 0) {
     addLog(`[Config] .env: ${envFileInfo.loaded} variable(s) — ${envFileInfo.keys.join(", ")}`);
   }
-  if (process.env.TZ) addLog(`[Config] Time zone: ${process.env.TZ}`);
+  if (process.env.TZ) {
+    const fromSettings = PANEL_TZ !== process.env.TZ;
+    addLog(
+      `[Config] Time zone: ${process.env.TZ}` +
+        (fromSettings ? ` (settings.json; the panel said ${PANEL_TZ || "nothing"})` : ""),
+    );
+  }
   const dash = resolveDashboard(env);
   if (dash.password) addLog("[Config] Dashboard: password required");
   else if (dash.path) addLog(`[Config] Dashboard: secret link /${dash.path.replace(/^\/+/, "")}`);
@@ -3997,6 +4017,7 @@ const exported = {
   setChatEnabled,
   pickRandomInt,
   nextAntiAfkDelayMs,
+  firstAntiAfkDelayMs,
   pickAntiAfkAction,
   isQuietHour,
   pickRestMs,
