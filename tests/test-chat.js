@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-chat.js — chat that reads like a person, not a cron
 //
-//   npm run test:chat   (9 tests)
+//   npm run test:chat   (11 tests)
 //
 // A fixed 120s timer sending the same list in the same order is the
 // clearest "this is a bot" signature a server can see. These tests pin
@@ -121,6 +121,43 @@ test("9. /help explains that the box is not a shell", () => {
   assert.equal(help.ok, true);
   assert.ok(/not a shell/.test(help.msg), help.msg);
   assert.ok(/\/say <text>/.test(help.msg), help.msg);
+});
+
+test("10. setChatEnabled(false) is a hard stop, not a shorter delay", () => {
+  const was = index.chatState().enabled;
+  try {
+    const off = index.setChatEnabled(false);
+    assert.equal(off.ok, true);
+    assert.equal(off.enabled, false);
+    assert.equal(index.chatState().enabled, false);
+    assert.equal(index.config.utils["chat-messages"].enabled, false);
+    assert.ok(/silent/i.test(off.msg), off.msg);
+
+    const on = index.setChatEnabled(true);
+    assert.equal(on.enabled, true);
+    assert.equal(index.chatState().enabled, true);
+    assert.ok(/420s/.test(on.msg), on.msg);
+  } finally {
+    index.setChatEnabled(was);
+  }
+});
+
+test("11. /chat reports and flips the same switch the dashboard uses", () => {
+  const was = index.chatState().enabled;
+  try {
+    index.sendConsoleCommand("/chat on");
+    assert.ok(/Chat is ON/.test(index.sendConsoleCommand("/chat").msg));
+    const off = index.sendConsoleCommand("/chat off");
+    assert.equal(off.ok, true);
+    assert.ok(/Chat is OFF/.test(index.sendConsoleCommand("/chat").msg), index.sendConsoleCommand("/chat").msg);
+    assert.equal(index.sendConsoleCommand("/chat on").enabled, true);
+    // unknown argument just reports, it does not toggle
+    const before = index.chatState().enabled;
+    index.sendConsoleCommand("/chat maybe");
+    assert.equal(index.chatState().enabled, before);
+  } finally {
+    index.setChatEnabled(was);
+  }
 });
 
 run("chat");

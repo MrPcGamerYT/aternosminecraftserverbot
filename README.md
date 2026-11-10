@@ -12,7 +12,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 npm install
 npm run doctor     # pre-flight: node version, files, deps, target, port
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 169 tests, no framework, no network
+npm run test:all   # 179 tests, no framework, no network
 ```
 
 ---
@@ -308,13 +308,77 @@ do; it never pretends to have done it.
 | GET/POST | `/mirror/status` | Mirror snapshot (GET) / inbound standby report (POST). |
 | POST | `/start` | Start the bot; also clears a policy block (explicit retry). |
 | POST | `/stop` | Stop the bot until `/start`. |
-| POST | `/command` | `{ "command": "/list" }` — `/help`, `/pos`, `/status`, `/probe`, `/start`, `/stop`, or anything sent in-game. |
+| POST | `/command` | `{ "command": "/list" }` — `/help`, `/pos`, `/status`, `/chat`, `/probe`, `/start`, `/stop`, or anything sent in-game. |
+| POST | `/chat` | `{ "enabled": false }` — turn automatic chat off/on live (no body toggles). `"off"` is a hard stop: the timer is cleared, nothing is queued. |
 
 All of the above work unchanged inside a serverless function (they are served by
 the same express app); in proxy mode they are forwarded to the always-on bot so
 the dashboard you look at is the real, live session.
 
 ---
+
+## Looking like a player, not a cron job
+
+Servers notice regularity faster than they notice anything else. A ternos is
+blunt about it: an account that is online 24/7, performs one action every 45
+seconds and never says anything is not playing, it is idling. Three things keep
+the bot on the human side of that line.
+
+| Signal | Old behaviour | Now |
+| --- | --- | --- |
+| Anti-AFK | swing every 45 s, hotbar every 60 s, forever | one action every **20-90 s**, chosen at random: look around (32%+26%), swing, hotbar, sit idle, sneak, jump — and doing nothing between them is normal |
+| Chat | five fixed lines every 120 s | random line, gap 60-140% of `repeat-delay`, only when someone else is online |
+| Sessions | connected for weeks | optional `leave-rejoin` (45-150 min, then a 10-40 min break) and optional **quiet hours** |
+
+**Quiet hours** are honest offline time, not silence: the bot closes the
+connection and comes back on its own.
+
+```json
+"human-mode": { "enabled": true, "quiet-hours": { "enabled": true, "start-hour": 1, "end-hour": 8 } }
+```
+
+```
+[Human] Quiet hours (1:00-8:00) — going offline like a person would
+[Human] Quiet hours are over — coming back online
+```
+
+Two warnings that matter more than the settings:
+
+1. On **Aternos**, a break usually means the server shuts down while the bot is
+   away, and the bot cannot start it again — someone has to open the Aternos
+   panel. Only leave `leave-rejoin` / quiet hours on if you accept that, or use
+   exaroton (where the API can start the server).
+2. **No setting makes automation allowed.** Aternos' rules prohibit AFK bots
+   regardless of how human the traffic looks. Human mode reduces the chance of
+   an automated flag and makes the account indistinguishable to other players; it
+   cannot make a rule go away.
+
+`npm run doctor` reports which mode you are in:
+
+```
+[ ok ] Human mode: on — jittered anti-AFK, random chat; quiet hours off (24/7)
+```
+
+## Automatic chat, on a switch
+
+Two independent knobs, often confused:
+
+| Knob | Where | Effect |
+| --- | --- | --- |
+| `utils."chat-messages".enabled` | `settings.json` | the master switch. `false` = the bot never calls `bot.chat()` on its own |
+| `utils."chat-messages"."repeat-delay"` | `settings.json` | only matters while `enabled` is true: seconds between lines (60-140% jitter applied, 5 s floor) |
+
+To silence a running bot without editing files:
+
+| Where | What to do |
+| --- | --- |
+| Dashboard | the **Turn auto-chat off / on** button in the Bot card, or `POST /chat` |
+| Panel console | `/chat off`, `/chat on`, `/chat` (reports the current state) |
+| Minecraft chat | `/msg <bot> chat off` if you allow chat commands from players |
+
+`/chat off` clears the interval and removes it from the tracked set, so a
+reconnect cannot re-arm it — the next `/chat on` (or restart) does. That is a
+different thing from raising `repeat-delay`, which only makes the messages rarer.
 
 ## Dashboard
 
@@ -384,7 +448,11 @@ RAILWAY_PUBLIC_DOMAIN auto
       "tick-interval": 5000
     },
     "auto-auth":     { "enabled": false, "password": "" },
-    "anti-afk":      { "enabled": true,  "sneak": false },
+    "anti-afk":      { "enabled": true,  "sneak": false },      // jittered 20-90s, weighted actions
+    "human-mode":    {
+      "enabled": true,
+      "quiet-hours": { "enabled": false, "start-hour": 1, "end-hour": 8 }  // true = offline at night
+    },
     "chat-messages": {
       "enabled": false,                  // true = the bot talks
       "repeat": false,                   // true = keep talking every "repeat-delay"
@@ -392,7 +460,13 @@ RAILWAY_PUBLIC_DOMAIN auto
       "only-when-players-online": true,  // stay silent on an empty server
       "messages": []                     // picked at random, never twice in a row
     },
-    "leave-rejoin":  { "enabled": false, "min-stay-ms": 300000, "max-stay-ms": 900000 }
+    "leave-rejoin":  {
+      "enabled": false,                 // leave politely after a random session
+      "min-stay-ms": 2700000,           // 45 min
+      "max-stay-ms": 9000000,           // 150 min
+      "rest-min-ms": 600000,            // break 10-40 min before rejoining
+      "rest-max-ms": 2400000
+    }
   },
   "provider": {
     "enabled": true,
@@ -601,7 +675,7 @@ online is normal.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 13 suites (169 tests)
+npm run test:all          # syntax + all 14 suites (179 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -613,9 +687,10 @@ npm run test:all          # syntax + all 13 suites (169 tests)
 | `test-provider.js` | 21 | Status map 0–10, token exclusivity, base URL scheme, start/stop/restart paths, error surfacing, token scrubbing, endpoint wiring. |
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
-| `test-chat.js` | 9 | Chat that reads like a person: every gap is 60–140% of `repeat-delay` with a 5 s floor, the same line never repeats back to back even with a degenerate random source, one-line and empty lists behave, 420 s averages 6–8 minutes; and the console box sends chat, refuses shell commands (`npm install` gets an explanation instead of "not connected") and reports stopped vs not-connected correctly. |
+| `test-chat.js` | 11 |
+| `test-human.js` | 7 | Behaviour that does not look like a cron: anti-AFK gaps are 20–90 s and actually vary, actions are weighted (look/swing dominate), quiet hours handle windows that wrap midnight, breaks are 10–40 min, and a source scan fails the build if the old 45 s/60 s fixed timers come back. | Chat that reads like a person: every gap is 60–140% of `repeat-delay` with a 5 s floor, the same line never repeats back to back even with a degenerate random source, one-line and empty lists behave, 420 s averages 6–8 minutes; and the console box sends chat, refuses shell commands (`npm install` gets an explanation instead of "not connected") reports stopped vs not-connected correctly; and `/chat off` (or the dashboard button) is a hard stop that clears the timer, not a shorter delay. |
 | `test-dashboard-auth.js` | 6 | Optional dashboard password: off with no env var, 401 + `WWW-Authenticate` without one, accepted with the right user/password, wrong user/password/garbage rejected, `/ping` `/health` `/mirror/status` left open for health checks, and tricky passwords (`:`, unicode) still work. |
-| `test-doctor.js` | 9 | The pre-flight check: a real checkout passes, a ZIP with an extra folder is explained with the `mv` that fixes it, missing `node_modules` names the command, broken `settings.json` and an empty target fail, Node 18 fails / 25 warns, `SERVER_PORT` becomes the reported port, Vercel without `BOT_BACKEND_URL` is a hard failure, and a half-written `node_modules` is caught when mineflayer is required instead of at login. |
+| `test-doctor.js` | 10 | The pre-flight check: a real checkout passes, a ZIP with an extra folder is explained with the `mv` that fixes it, missing `node_modules` names the command, broken `settings.json` and an empty target fail, Node 18 fails / 25 warns, `SERVER_PORT` becomes the reported port, Vercel without `BOT_BACKEND_URL` is a hard failure, and a half-written `node_modules` is caught when mineflayer is required instead of at login. |
 | `test-liveness.js` | 6 | What counts as "the server is still talking": parsed packets alone keep a session alive (the panel-host 90s loop), raw bytes and chat still count, genuine silence still reconnects, detach removes every listener, and a bot with no `_client` never throws. |
 | `test-single-host.js` | 19 | The one-host promise, enforced: `render.yaml` has exactly **one** service, stays on `plan: free`, runs one instance of `node index.js`, keeps `BOT_BACKEND_URL` empty, caps the V8 heap under 512 MB, self-pings faster than Render's 15-min spin-down and health-checks `/health`; `Procfile`/`nixpacks`/`Dockerfile` agree on the port and the endpoint; `docker-compose.yml` and the systemd unit restart forever; the Termux script takes a wake-lock; `SERVER_PORT` is read so a panel host's assigned port is bound; `deploy/free-hosts.md` covers every free option and warns about multi-accounting; the serverless entry never claims to start a bot. |
 | `test-serverless.js` | 21 | The Vercel/Lambda entry: callable export, warning-free `vercel.json` + bounded `engines`, static-output hygiene, routing, no bot started, every page 200, honest banner, warm-handler reuse, POST bodies, proxying, 502 on a dead backend, plus the degraded paths (stripped `index.js`, module that throws, backend still reachable) and an import/export consistency check. |
