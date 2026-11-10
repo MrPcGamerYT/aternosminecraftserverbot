@@ -2257,6 +2257,179 @@ function setupHumanSchedule() {
   addLog(`[Human] Quiet hours: offline ${hm.quiet.startHour}:00-${hm.quiet.endHour}:00 local time`);
 }
 
+function setupMovement(bot, movements) {
+  const movement = movementConfig();
+  if (movement.enabled === false) return;
+
+  const pf = loadPathfinder();
+  const hasPathfinder = Boolean(pf.mod && typeof bot.pathfinder === "object" && bot.pathfinder !== null);
+
+  if (movement["look-around"] && movement["look-around"].enabled) {
+    const interval = Math.max(1000, Number(movement["look-around"].interval) || 5000);
+    addBotInterval(() => {
+      if (!runtime.connectedAt) return;
+      try {
+        bot.look(Math.random() * Math.PI * 2 - Math.PI, (Math.random() * Math.PI) / 2 - Math.PI / 4, false);
+        if (watchdog) watchdog.noteMovement();
+      } catch (_err) {
+        /* ignore */
+      }
+    }, interval);
+  }
+
+  if (movement["circle-walk"] && movement["circle-walk"].enabled && hasPathfinder && movements) {
+    const radius = Math.max(1, Number(movement["circle-walk"].radius) || 4);
+    const interval = Math.max(1000, Number(movement["circle-walk"].speed) || 3000);
+    let angle = 0;
+    addBotInterval(() => {
+      if (!runtime.connectedAt || !bot.entity || !bot.entity.position) return;
+      try {
+        const { GoalBlock } = pf.mod.goals;
+        const base = bot.entity.position;
+        const x = Math.floor(base.x + Math.cos(angle) * radius);
+        const z = Math.floor(base.z + Math.sin(angle) * radius);
+        bot.pathfinder.setMovements(movements);
+        bot.pathfinder.setGoal(new GoalBlock(x, Math.floor(base.y), z));
+        angle += Math.PI / 4;
+        if (watchdog) watchdog.noteMovement();
+      } catch (_err) {
+        /* ignore */
+      }
+    }, interval);
+  } else if (movement["random-jump"] && movement["random-jump"].enabled) {
+    const interval = Math.max(2000, Number(movement["random-jump"].interval) || 10000);
+    addBotInterval(() => {
+      if (!runtime.connectedAt || typeof bot.setControlState !== "function") return;
+      try {
+        bot.setControlState("jump", true);
+        setTimeout(() => {
+          try {
+            bot.setControlState("jump", false);
+          } catch (_err) {
+            /* ignore */
+          }
+        }, 300).unref?.();
+        if (watchdog) watchdog.noteMovement();
+      } catch (_err) {
+        /* ignore */
+      }
+    }, interval);
+  }
+}
+
+function setupPosition(bot, movements) {
+  const position = config.position || {};
+  if (!position.enabled || circleWalkEnabled()) return;
+  const pf = loadPathfinder();
+  if (!pf.mod || !movements || !bot.pathfinder) return;
+  try {
+    const { GoalBlock } = pf.mod.goals;
+    bot.pathfinder.setMovements(movements);
+    bot.pathfinder.setGoal(new GoalBlock(Number(position.x) || 0, Number(position.y) || 64, Number(position.z) || 0));
+    addLog(`[Position] Navigating to ${position.x}, ${position.y}, ${position.z}`);
+  } catch (err) {
+    addLog(`[Position] Could not set goal: ${err.message}`);
+  }
+}
+
+function setupLeaveRejoinModule(bot) {
+  const lr = (config.utils && config.utils["leave-rejoin"]) || {};
+  if (!lr.enabled) return;
+  // leaveRejoin.js schedules a quit; the reconnect scheduler notices the
+  // resulting `end` event and rejoins. It never reconnects on its own.
+  const restMin = Number(lr["rest-min-ms"]) || 0;
+  const restMax = Number(lr["rest-max-ms"]) || 0;
+  setupLeaveRejoin(bot, () => {
+    // An optional break: a person who says goodbye for 20 minutes does not come
+    // back in 8 seconds, and a server can tell the difference.
+    const restMs = restMin > 0 ? pickRestMs(restMin, restMax) : 0;
+    if (restMs > 0) {
+      addLog(`[LeaveRejoin] Break — back in about ${Math.round(restMs / 60000)} min`);
+      scheduleReconnect("leave-rejoin", { delayMs: restMs });
+    } else {
+      addLog("[LeaveRejoin] Scheduled leave — the reconnect scheduler will bring the bot back");
+      scheduleReconnect("leave-rejoin");
+    }
+  }, {
+    log: addLog,
+    minStayMs: Number(lr["min-stay-ms"]) || undefined,
+    maxStayMs: Number(lr["max-stay-ms"]) || undefined,
+  });
+}
+
+function setupCombat(bot) {
+  const combat = config.combat || {};
+  if (!combat["attack-mobs"]) return;
+
+  let lastAttack = 0;
+  bot.on("physicsTick", () => {
+    if (!runtime.connectedAt) return;
+    const now = Date.now();
+    if (now - lastAttack < 620) return; // 1.9+ attack cooldown
+    try {
+      const entities = Object.values(bot.entities || {});
+      const target = entities.find(
+        (e) =>
+          e &&
+          e !== bot.entity &&
+          e.type === "mob" &&
+          e.position &&
+          bot.entity &&
+          bot.entity.position.distanceTo(e.position) < 4,
+      );
+      if (target) {
+        bot.attack(target);
+        lastAttack = now;
+        if (watchdog) watchdog.noteMovement();
+      }
+    } catch (_err) {
+      /* ignore */
+    }
+  });
+
+  if (combat["auto-eat"]) {
+    bot.on("health", () => {
+      try {
+        if (typeof bot.food !== "number" || bot.food >= 14) return;
+        const food = bot.inventory.items().find((item) => item.foodPoints > 0);
+        if (!food) return;
+        bot.equip(food, "hand")
+          .then(() => bot.consume())
+          .catch(() => {});
+      } catch (_err) {
+        /* ignore */
+      }
+    });
+  }
+}
+
+function setupBeds(bot) {
+  const beds = config.beds || {};
+  if (!beds["place-night"]) return;
+  let trying = false;
+  addBotInterval(async () => {
+    if (!runtime.connectedAt || trying) return;
+    try {
+      const time = bot.time && Number(bot.time.timeOfDay);
+      if (!Number.isFinite(time) || time < 12500 || time > 23500) return;
+      const block = bot.findBlock({
+        matching: (b) => b && typeof b.name === "string" && b.name.includes("bed"),
+        maxDistance: 8,
+      });
+      if (!block) return;
+      trying = true;
+      try {
+        await bot.sleep(block);
+        addLog("[Beds] Sleeping");
+      } finally {
+        trying = false;
+      }
+    } catch (_err) {
+      trying = false;
+    }
+  }, 10000);
+}
+
 function setupChatResponder(bot) {
   const chat = config.chat || {};
   bot.on("chat", (author, message) => {

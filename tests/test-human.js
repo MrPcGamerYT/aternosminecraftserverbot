@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-human.js — behaviour that does not look like a cron
 //
-//   npm run test:human   (7 tests)
+//   npm run test:human   (9 tests)
 //
 // A ternos (and every other server) notices regularity: one action
 // every 45s, forever, is not something a person does. These tests
@@ -104,6 +104,34 @@ test("7. the scheduled checkout left fixed anti-AFK timers behind", () => {
   assert.ok(!/}, 45000\)/.test(antiAfk), "45s swing timer is back");
   assert.ok(!/}, 60000\)/.test(antiAfk), "60s hotbar timer is back");
   assert.ok(/nextAntiAfkDelayMs/.test(antiAfk), "anti-AFK no longer jitters");
+});
+
+test("8. every module the spawn handler arms is actually defined", () => {
+  // This is the bug a live SillyDev log caught: an edit that removed
+  // setupMovement/setupPosition/setupCombat/setupBeds/setupLeaveRejoinModule
+  // still started, connected and said "Modules ready" — while silently arming
+  // nothing, so the bot stood still and was idle-kicked.
+  const fs = require("fs");
+  const path = require("path");
+  const source = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+  const init = source.slice(source.indexOf("function initializeModules"), source.indexOf("function buildMovements"));
+  const arms = [...init.matchAll(/guard\("([\w-]+)",\s*\(\)\s*=>\s*(\w+)\(/g)].map((m) => ({
+    module: m[1],
+    fn: m[2],
+  }));
+  assert.ok(arms.length >= 9, `expected the full module list, found ${arms.length}`);
+  for (const { module, fn } of arms) {
+    assert.ok(new RegExp(`function ${fn}\\s*\\(`).test(source), `${module} arms ${fn}() but ${fn} is not defined`);
+  }
+});
+
+test("9. the modules that move and defend the bot are in the file", () => {
+  const fs = require("fs");
+  const path = require("path");
+  const source = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+  for (const name of ["setupMovement", "setupPosition", "setupCombat", "setupBeds", "setupLeaveRejoinModule", "setupAutoAuth", "setupChatMessages", "setupAntiAfk", "setupChatResponder"]) {
+    assert.ok(new RegExp(`function ${name}\\s*\\(`).test(source), `${name} is missing from index.js`);
+  }
 });
 
 run("human");

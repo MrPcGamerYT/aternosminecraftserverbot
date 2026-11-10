@@ -12,7 +12,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 npm install
 npm run doctor     # pre-flight: node version, files, deps, target, port
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 179 tests, no framework, no network
+npm run test:all   # 181 tests, no framework, no network
 ```
 
 ---
@@ -675,7 +675,7 @@ online is normal.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 14 suites (179 tests)
+npm run test:all          # syntax + all 14 suites (181 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -688,7 +688,7 @@ npm run test:all          # syntax + all 14 suites (179 tests)
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
 | `test-chat.js` | 11 |
-| `test-human.js` | 7 | Behaviour that does not look like a cron: anti-AFK gaps are 20–90 s and actually vary, actions are weighted (look/swing dominate), quiet hours handle windows that wrap midnight, breaks are 10–40 min, and a source scan fails the build if the old 45 s/60 s fixed timers come back. | Chat that reads like a person: every gap is 60–140% of `repeat-delay` with a 5 s floor, the same line never repeats back to back even with a degenerate random source, one-line and empty lists behave, 420 s averages 6–8 minutes; and the console box sends chat, refuses shell commands (`npm install` gets an explanation instead of "not connected") reports stopped vs not-connected correctly; and `/chat off` (or the dashboard button) is a hard stop that clears the timer, not a shorter delay. |
+| `test-human.js` | 9 | Behaviour that does not look like a cron: anti-AFK gaps are 20–90 s and actually vary, actions are weighted (look/swing dominate), quiet hours handle windows that wrap midnight, breaks are 10–40 min, a source scan fails the build if the old 45 s/60 s fixed timers come back, and every `guard()` in `initializeModules` must name a function that exists — the check that would have caught the release where five modules were armed but undefined. | Chat that reads like a person: every gap is 60–140% of `repeat-delay` with a 5 s floor, the same line never repeats back to back even with a degenerate random source, one-line and empty lists behave, 420 s averages 6–8 minutes; and the console box sends chat, refuses shell commands (`npm install` gets an explanation instead of "not connected") reports stopped vs not-connected correctly; and `/chat off` (or the dashboard button) is a hard stop that clears the timer, not a shorter delay. |
 | `test-dashboard-auth.js` | 6 | Optional dashboard password: off with no env var, 401 + `WWW-Authenticate` without one, accepted with the right user/password, wrong user/password/garbage rejected, `/ping` `/health` `/mirror/status` left open for health checks, and tricky passwords (`:`, unicode) still work. |
 | `test-doctor.js` | 10 | The pre-flight check: a real checkout passes, a ZIP with an extra folder is explained with the `mv` that fixes it, missing `node_modules` names the command, broken `settings.json` and an empty target fail, Node 18 fails / 25 warns, `SERVER_PORT` becomes the reported port, Vercel without `BOT_BACKEND_URL` is a hard failure, and a half-written `node_modules` is caught when mineflayer is required instead of at login. |
 | `test-liveness.js` | 6 | What counts as "the server is still talking": parsed packets alone keep a session alive (the panel-host 90s loop), raw bytes and chat still count, genuine silence still reconnects, detach removes every listener, and a bot with no `_client` never throws. |
