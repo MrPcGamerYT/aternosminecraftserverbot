@@ -701,13 +701,28 @@ Everything in this list is a field in their panel, in the order the panel asks.
 | `MAIN_FILE` | `index.js` — **not** `doctor.js`, or the panel runs the pre-flight check forever |
 | Startup command | leave theirs (`npm start`) — it runs `npm install` first |
 
+### Variables — or a `.env` file if the panel has no Variables tab
+
+SillyDev does not always show one. Same variables, in a file called `.env` in the
+container root:
+
+```
+DASHBOARD_PATH=my-bot-7f3a
+TZ=Asia/Kolkata
+```
+
+Nothing else changes; the app reads it at boot and logs `[Config] .env: 2
+variable(s)`. `settings.json` can carry `"dashboard": { "path": ... }` and
+`"timezone": ...` too, for hosts where file names are awkward.
+
 ### Variables tab
 
 | Name | Value | Why |
 | --- | --- | --- |
 | `NODE_OPTIONS` | `--max-old-space-size=192` | 256 MB container; without this V8 reserves more than it has and the panel kills the process |
-| `DASHBOARD_PASSWORD` | a long random string | the port is public, so the dashboard needs a password |
-| `DASHBOARD_USER` | `admin` | optional, this is the default |
+| `DASHBOARD_PATH` | `my-bot-<random>` | a link only you know: no login prompt, root answers 404. Use this if you dislike passwords |
+| `DASHBOARD_PASSWORD` | *(skip if using `DASHBOARD_PATH`)* | the alternative: HTTP basic auth |
+| `DASHBOARD_USER` | `admin` | only with `DASHBOARD_PASSWORD` |
 | `TZ` | `Asia/Kolkata` | makes quiet hours and log timestamps your local time |
 | `MC_SERVER_HOST` / `MC_SERVER_PORT` | optional | overrides `settings.json` without editing files |
 
@@ -724,8 +739,8 @@ to it automatically.
 ### What a healthy start looks like
 
 ```
-[Server] Dashboard listening on http://0.0.0.0:6219
-[Server] Dashboard password required (HTTP basic auth)
+[Server] Dashboard listening on http://0.0.0.0:6219/my-bot-7f3a
+[Server] Dashboard uses a secret link (/my-bot-7f3a) — bookmarks only, the root answers 404
 [Chat]   Automated messages ON — one random line every ~420s with jitter
 [Human]  Quiet hours: offline 1:00-8:00 local time
 [Bot]    Connecting to ZLAG.aternos.me:39033
@@ -737,7 +752,8 @@ set it back).
 ### Dashboard link
 
 **Network** tab → copy the allocation (`IP:PORT` or `node-XX.sillydev.co.uk:PORT`)
-→ open `http://that` → user `admin`, password from your variables.
+→ open `http://that/<DASHBOARD_PATH>`. Without `DASHBOARD_PATH`, plain
+`http://that` works but is open to anyone who finds the port.
 
 ### Staying out of trouble there
 

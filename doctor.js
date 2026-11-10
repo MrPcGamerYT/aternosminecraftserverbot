@@ -218,6 +218,49 @@ function runChecks(options = {}) {
     ? ` — note: SERVER_PORT is ${panel}, the panel expects that one`
     : ""));
 
+  // ---- 4b. Where variables come from -----------------------------------
+  // Plenty of panels have no Variables tab; a `.env` next to index.js is the
+  // fallback, so say whether this copy has one.
+  const envPath = path.join(root, ".env");
+  if (fs.existsSync(envPath)) {
+    let count = 0;
+    try {
+      count = fs
+        .readFileSync(envPath, "utf8")
+        .split(/\r?\n/)
+        .filter((line) => /^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=/.test(line)).length;
+    } catch (_err) {
+      count = 0;
+    }
+    ok("Variables file", `.env with ${count} line(s) — used when the panel has no Variables tab`);
+  } else if (Object.keys(env).some((key) => /^(PORT|SERVER_PORT|DASHBOARD_|MC_|NODE_OPTIONS|TZ)/.test(key))) {
+    ok("Variables file", "no .env — the panel variables are set, which is fine");
+  } else {
+    ok("Variables file", "no .env and no panel variables — settings.json alone is running this copy");
+  }
+
+  // ---- 5a. Who can reach the dashboard --------------------------------
+  // The port a panel gives you is on the open internet. Without a guard,
+  // anyone scanning it can press Stop or chat as the bot.
+  const dashCfg = (config && config.dashboard) || {};
+  const dashPassword = String(env.DASHBOARD_PASSWORD || dashCfg.password || "").trim();
+  const dashPath = String(env.DASHBOARD_PATH || dashCfg.path || "")
+    .trim()
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (dashPassword) {
+    ok("Dashboard access", "password required (HTTP basic auth)");
+  } else if (dashPath) {
+    ok("Dashboard access", `secret link /${dashPath} — no login prompt, root answers 404`);
+  } else if (env.VERCEL || env.BOT_BACKEND_URL) {
+    ok("Dashboard access", "no local port exposed (serverless/proxy)");
+  } else {
+    warn(
+      "Dashboard access",
+      "open — anyone with the URL can stop the bot; set DASHBOARD_PATH=<secret> for a private link (no password prompt)",
+    );
+  }
+
   // ---- 5b. What the panel will actually run ----------------------------
   // SillyDev/Pterodactyl start whatever MAIN_FILE says. Setting it to
   // doctor.js (a common trick to see this output) leaves the bot "not

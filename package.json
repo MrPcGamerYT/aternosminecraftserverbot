@@ -26,7 +26,8 @@
     "test:dashboard-auth": "node tests/test-dashboard-auth.js",
     "test:chat": "node tests/test-chat.js",
     "test:human": "node tests/test-human.js",
-    "test:all": "npm run test && npm run test:lifecycle && npm run test:duplicate-instance && npm run test:mirror && npm run test:watcher-policy && npm run test:provider && npm run test:proxy && npm run test:keepalive && npm run test:serverless && npm run test:single-host && npm run test:liveness && npm run test:doctor && npm run test:dashboard-auth && npm run test:chat && npm run test:human"
+    "test:envfile": "node tests/test-envfile.js",
+    "test:all": "npm run test && npm run test:lifecycle && npm run test:duplicate-instance && npm run test:mirror && npm run test:watcher-policy && npm run test:provider && npm run test:proxy && npm run test:keepalive && npm run test:serverless && npm run test:single-host && npm run test:liveness && npm run test:doctor && npm run test:dashboard-auth && npm run test:chat && npm run test:human && npm run test:envfile"
   },
   "keywords": [
     "minecraft",
