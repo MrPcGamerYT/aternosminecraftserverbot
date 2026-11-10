@@ -314,7 +314,11 @@ function runChecks(options = {}) {
       "CPU profile",
       `lite — view distance ${perf["view-distance"] || "tiny"}, physics ${perf.physics === false ? "off" : "on"}, ` +
         "actions every 60-150s, movement/position/combat/beds skipped, " +
-        (perf["looks-human"] === false ? "plain twitches" : "human bursts + reactions"),
+        (perf["looks-human"] === false ? "plain twitches" : "human bursts + reactions") +
+        (perf.walk && perf.walk.enabled !== false
+          ? `, ${perf.walk["min-blocks"] || 3}-${perf.walk["max-blocks"] || 10} block wander every ` +
+            `${Math.round((perf.walk["min-gap-ms"] || 180000) / 60000)}-${Math.round((perf.walk["max-gap-ms"] || 420000) / 60000)}min`
+          : ", no walking"),
     );
   } else {
     ok("CPU profile", "normal — full modules (movement, combat, beds)");

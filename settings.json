@@ -12,7 +12,14 @@
     "physics": true,
     "view-distance": "tiny",
     "quiet-actions": true,
-    "looks-human": true
+    "looks-human": true,
+    "walk": {
+      "enabled": true,
+      "min-blocks": 3,
+      "max-blocks": 10,
+      "min-gap-ms": 180000,
+      "max-gap-ms": 420000
+    }
   },
   "bot-account": {
     "username": "OfflinePlayer",
