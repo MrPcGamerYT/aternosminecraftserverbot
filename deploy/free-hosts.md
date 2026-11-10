@@ -663,6 +663,8 @@ becomes Minecraft chat, `/something` becomes a Minecraft command.
 | `/list` | runs `/list` in game |
 | `/status` | connection state and session uptime |
 | `/pos` | bot coordinates |
+| `/chat off` | stop automatic messages (no restart) |
+| `/chat on` | resume them |
 | `npm install` | refused: *"npm is a shell command — this box only sends Minecraft chat"* |
 
 That console is the process's stdin. `npm install` and `node doctor.js` typed

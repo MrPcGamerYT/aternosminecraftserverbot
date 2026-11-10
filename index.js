@@ -951,9 +951,16 @@ function publicState() {
   const uptimeMs = sessionUptimeMs(now);
   const probe = runtime.lastProbe;
 
+  const chat = chatState();
   const state = {
     version: VERSION,
     name: config.name || "AFK Bot",
+    chat: {
+      enabled: chat.enabled,
+      every: chat.delay,
+      messages: chat.messages.length,
+      onlyWhenPlayersOnline: chat.onlyWithPlayers,
+    },
     instanceId: runtime.instanceId,
     startedAt: runtime.startedAt,
     processUptimeMs: Math.max(0, now - runtime.startedAt),
@@ -1954,6 +1961,61 @@ function pickChatMessage(messages, last, random = Math.random) {
   return from[Math.floor(random() * from.length)];
 }
 
+let chatTimer = null;
+
+/** The live chat settings, whatever the dashboard or console last said. */
+function chatState() {
+  const chat = (config.utils && config.utils["chat-messages"]) || {};
+  const messages = Array.isArray(chat.messages) ? chat.messages.filter(Boolean) : [];
+  return {
+    enabled: chat.enabled === true,
+    repeat: chat.repeat === true,
+    delay: Number(chat["repeat-delay"]) || 120,
+    onlyWithPlayers: chat["only-when-players-online"] === true,
+    messages,
+    timer: Boolean(chatTimer),
+  };
+}
+
+/**
+ * Turn automatic chat on or off while the bot is running.
+ *
+ * `enabled: false` is a hard stop: the timer is cleared, so not even the first
+ * line after a reconnect goes out. Editing settings.json needs a restart; this
+ * does not.
+ */
+function setChatEnabled(enabled, source = "console") {
+  const chat = (config.utils = config.utils || {})["chat-messages"] || (config.utils["chat-messages"] = {});
+  const want = Boolean(enabled);
+  const messages = Array.isArray(chat.messages) ? chat.messages.filter(Boolean) : [];
+
+  if (!want) {
+    chat.enabled = false;
+    if (chatTimer) {
+      clearInterval(chatTimer);
+      botIntervals.delete(chatTimer);
+      chatTimer = null;
+    }
+    addLog("[Chat] Automated messages OFF — the bot will not say anything.");
+    return { ok: true, enabled: false, msg: "Automated chat off. The bot is silent (it still plays and stays connected)." };
+  }
+
+  chat.enabled = true;
+  if (messages.length === 0) {
+    return { ok: false, enabled: true, msg: "Chat is enabled, but the message list in settings.json is empty, so nothing will be sent." };
+  }
+  if (!chatTimer && runtime.bot) {
+    setupChatMessages(runtime.bot);
+  }
+  const detail = chat.repeat === true ? `one random line every ~${Number(chat["repeat-delay"]) || 120}s with jitter` : "one line after each join";
+  addLog(`[Chat] Automated messages ON — ${detail}${source === "dashboard" ? " (dashboard)" : ""}.`);
+  return {
+    ok: true,
+    enabled: true,
+    msg: `Automated chat on: ${messages.length} message(s), ${detail}${chat["only-when-players-online"] === true ? ", only when someone else is online" : ""}.`,
+  };
+}
+
 function setupChatMessages(bot) {
   const chatConfig = (config.utils && config.utils["chat-messages"]) || {};
   if (!chatConfig.enabled) return;
@@ -1971,6 +2033,12 @@ function setupChatMessages(bot) {
     }
   };
 
+  if (chatTimer) {
+    clearInterval(chatTimer);
+    botIntervals.delete(chatTimer);
+    chatTimer = null;
+  }
+
   if (chatConfig.repeat) {
     const base = Math.max(5000, Number(chatConfig["repeat-delay"] || 120) * 1000);
     // A perfectly periodic timer is the most machine-looking thing a bot can
@@ -1979,8 +2047,9 @@ function setupChatMessages(bot) {
     const nextGap = () => chatGapMs(base);
     let nextAt = Date.now() + nextGap();
     let last = "";
-    addBotInterval(() => {
+    chatTimer = addBotInterval(() => {
       if (!runtime.connectedAt) return;
+      if (!config.utils["chat-messages"].enabled) return;
       if (Date.now() < nextAt) return;
       nextAt = Date.now() + nextGap();
       if (!someoneElseOnline()) return;
@@ -2357,6 +2426,18 @@ function sendConsoleCommand(command) {
     return { ok: false, msg };
   }
 
+  if (/^\/chat(\s|$)/i.test(cmd)) {
+    const arg = cmd.split(/\s+/)[1] || "";
+    const state = chatState();
+    if (/^(off|stop|false|0|disable)$/i.test(arg)) return setChatEnabled(false);
+    if (/^(on|start|true|1|enable)$/i.test(arg)) return setChatEnabled(true);
+    const msg = state.enabled
+      ? `Chat is ON — ${state.messages.length} message(s), every ~${state.delay}s with jitter${state.onlyWithPlayers ? ", only when someone else is online" : ""}. Use /chat off to silence it.`
+      : "Chat is OFF — the bot sends nothing. Use /chat on to resume.";
+    addLog(`[Console] ${msg}`);
+    return { ok: true, msg };
+  }
+
   if (cmd === "/help") {
     const lines = [
       "Available commands:",
@@ -2366,6 +2447,9 @@ function sendConsoleCommand(command) {
       "  /probe         Probe the server now",
       "  /start         Start the bot",
       "  /stop          Stop the bot",
+      "  /chat          Is automatic chat on or off",
+      "  /chat off      Silence the bot (no restart needed)",
+      "  /chat on       Resume automatic chat",
       "  /say <text>    Chat in-game",
       "  /<anything>    Send any Minecraft command",
       "  <text>         Send plain chat (this box is not a shell)",
@@ -2611,7 +2695,11 @@ function renderDashboard(state) {
       <button class="btn primary" data-post="/start" ${canStart ? "" : "disabled"}>Start bot</button>
       <button class="btn danger" data-post="/stop" ${state.status === "stopped" ? "disabled" : ""}>Stop bot</button>
       <button class="btn ghost" data-post="/server/check">Re-check server</button>
+      <button class="btn" data-post="/chat">${state.chat.enabled ? "Turn auto-chat off" : "Turn auto-chat on"}</button>
     </div>
+    <p class="status-detail" style="margin:6px 0 0">Auto-chat: ${state.chat.enabled
+      ? `<b>on</b> — ${state.chat.messages} line(s), one every ~${state.chat.every}s with jitter${state.chat.onlyWhenPlayersOnline ? ", only while someone else is online" : ""}`
+      : "<b>off</b> — the bot sends nothing; it still plays and stays connected"}.</p>
     <div class="row" style="margin-top:10px">
       <input id="cmd" class="btn ghost" style="flex:2 1 240px;text-align:left;cursor:text"
              placeholder="chat: hello  ·  /say hi  ·  /list  ·  /pos" autocomplete="off">
@@ -3141,6 +3229,13 @@ function createApp(options = {}) {
     res.json({ success: true, ok: true, msg: "Stopping the bot." });
   });
 
+  app.post("/chat", (req, res) => {
+    const body = req.body || {};
+    const wanted = typeof body.enabled === "boolean" ? body.enabled : !chatState().enabled;
+    const result = setChatEnabled(wanted, "dashboard");
+    res.json({ success: result.ok, ok: result.ok, msg: result.msg, enabled: result.enabled });
+  });
+
   app.post("/command", async (req, res) => {
     const command = (req.body && req.body.command) || "";
     if (String(command).trim() === "/probe") {
@@ -3623,6 +3718,8 @@ const exported = {
   // pure helpers (unit tested)
   chatGapMs,
   pickChatMessage,
+  chatState,
+  setChatEnabled,
   computeBackoff,
   computeDuplicateLoginDelay,
   shouldForceLogin,
