@@ -72,7 +72,17 @@ const DEFAULT_CONFIG = {
     "force-login-after-probes": 6,
     "duplicate-login-backoff-min": 120000,
     "duplicate-login-backoff-max": 180000,
-    "leave-rejoin": { enabled: false, "min-stay-ms": 300000, "max-stay-ms": 900000 },
+    "leave-rejoin": {
+      enabled: false,
+      "min-stay-ms": 300000,
+      "max-stay-ms": 900000,
+      "rest-min-ms": 0,
+      "rest-max-ms": 0,
+    },
+    "human-mode": {
+      enabled: true,
+      "quiet-hours": { enabled: false, "start-hour": 1, "end-hour": 8 },
+    },
     watchdog: {
       enabled: true,
       "silence-timeout": 90000,
@@ -1940,6 +1950,78 @@ function setupAutoAuth(bot) {
   setTimeout(() => tryAuth("login"), 10000).unref?.();
 }
 
+/** Uniform integer in [min, max], inclusive, from an injectable RNG. */
+function pickRandomInt(min, max, random = Math.random) {
+  const lo = Math.ceil(Number(min));
+  const hi = Math.floor(Number(max));
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return 0;
+  if (hi <= lo) return lo;
+  return Math.floor(random() * (hi - lo + 1)) + lo;
+}
+
+/**
+ * How long until the next anti-AFK twitch, in ms: 20-90s.
+ *
+ * The old loop did one thing every 45s, forever, exactly. Nothing a person does
+ * is that regular, and regularity is what a server's bot detector looks for
+ * first. (Aternos is blunt about it: an account that never varies is not
+ * playing.)
+ */
+function nextAntiAfkDelayMs(random = Math.random) {
+  return pickRandomInt(20000, 90000, random);
+}
+
+/**
+ * What the bot does on that tick. Weighted so the boring, low-risk actions
+ * dominate: looking around and swinging are invisible to other players, while
+ * jumping and sneaking move the body and are rarer.
+ */
+function pickAntiAfkAction(random = Math.random) {
+  const r = Number(random());
+  if (r < 0.32) return "swing";
+  if (r < 0.58) return "look";
+  if (r < 0.72) return "hotbar";
+  if (r < 0.82) return "idle";
+  if (r < 0.92) return "sneak";
+  return "jump";
+}
+
+/**
+ * Is `date` inside quiet hours? Handles windows that wrap midnight (23 -> 7),
+ * and returns false when the window is empty (start === end).
+ */
+function isQuietHour(date, startHour, endHour) {
+  const start = Number(startHour);
+  const end = Number(endHour);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  const from = ((Math.trunc(start) % 24) + 24) % 24;
+  const to = ((Math.trunc(end) % 24) + 24) % 24;
+  if (from === to) return false;
+  const hour = date.getHours();
+  return from < to ? hour >= from && hour < to : hour >= from || hour < to;
+}
+
+/** Break length after a session ends, in ms. */
+function pickRestMs(minMs, maxMs, random = Math.random) {
+  const lo = Number(minMs) > 0 ? Number(minMs) : 10 * 60 * 1000;
+  const hi = Number(maxMs) > lo ? Number(maxMs) : lo + 30 * 60 * 1000;
+  return pickRandomInt(lo, hi, random);
+}
+
+/** The `utils."human-mode"` block, with sane defaults. */
+function humanModeConfig() {
+  const hm = (config.utils && config.utils["human-mode"]) || {};
+  const quiet = hm["quiet-hours"] || {};
+  return {
+    enabled: hm.enabled !== false,
+    quiet: {
+      enabled: quiet.enabled === true,
+      startHour: Number(quiet["start-hour"]),
+      endHour: Number(quiet["end-hour"]),
+    },
+  };
+}
+
 /**
  * Gap until the next chat line, in ms: 60-140% of the configured delay.
  * A fixed timer is the most machine-looking thing a bot can do.
@@ -2083,208 +2165,96 @@ function setupAntiAfk(bot) {
   const antiAfk = (config.utils && config.utils["anti-afk"]) || {};
   if (!antiAfk.enabled) return;
 
+  // One jittered loop instead of three metronomes. Every tick decides whether
+  // it is time for something, and what.
+  let nextAt = Date.now() + nextAntiAfkDelayMs();
   addBotInterval(() => {
     if (!runtime.connectedAt) return;
+    if (Date.now() < nextAt) return;
+    nextAt = Date.now() + nextAntiAfkDelayMs();
+
+    const action = pickAntiAfkAction();
     try {
-      if (typeof bot.swingArm === "function") bot.swingArm();
-      if (watchdog) watchdog.noteMovement();
+      if (action === "swing") {
+        if (typeof bot.swingArm === "function") bot.swingArm();
+      } else if (action === "look") {
+        // Turning to look somewhere is what a person at the keyboard does
+        // constantly, and it moves the head, not the body.
+        if (typeof bot.look === "function") {
+          const yaw = Math.random() * Math.PI * 2;
+          const pitch = (Math.random() - 0.5) * 0.8;
+          bot.look(yaw, pitch, false).catch(() => {});
+        }
+      } else if (action === "hotbar") {
+        const slot = Math.floor(Math.random() * 9);
+        if (typeof bot.setQuickBarSlot === "function") bot.setQuickBarSlot(slot);
+      } else if (action === "sneak") {
+        if (typeof bot.setControlState === "function") {
+          bot.setControlState("sneak", true);
+          setTimeout(() => {
+            try {
+              bot.setControlState("sneak", false);
+            } catch (_err) {
+              /* ignore */
+            }
+          }, 400 + Math.floor(Math.random() * 1200)).unref?.();
+        }
+      } else if (action === "jump") {
+        if (typeof bot.setControlState === "function") {
+          bot.setControlState("jump", true);
+          setTimeout(() => {
+            try {
+              bot.setControlState("jump", false);
+            } catch (_err) {
+              /* ignore */
+            }
+          }, 150 + Math.floor(Math.random() * 250)).unref?.();
+        }
+      }
+      // "idle" deliberately does nothing: standing still between actions is
+      // normal, doing something every single interval is not.
     } catch (_err) {
       /* ignore */
     }
-  }, 45000);
-
-  addBotInterval(() => {
-    if (!runtime.connectedAt) return;
-    try {
-      const slot = Math.floor(Math.random() * 9);
-      if (typeof bot.setQuickBarSlot === "function") bot.setQuickBarSlot(slot);
-    } catch (_err) {
-      /* ignore */
-    }
-  }, 60000);
-
-  if (antiAfk.sneak) {
-    // A steady sneak keeps the hitbox small without sending fake input.
-    const id = setInterval(() => {
-      if (!runtime.connectedAt || typeof bot.setControlState !== "function") return;
-      try {
-        bot.setControlState("sneak", true);
-        setTimeout(() => {
-          try {
-            bot.setControlState("sneak", false);
-          } catch (_err) {
-            /* ignore */
-          }
-        }, 800).unref?.();
-      } catch (_err) {
-        /* ignore */
-      }
-    }, 30000);
-    botIntervals.add(id);
-  }
+    if (watchdog) watchdog.noteMovement();
+  }, 10000).unref?.();
 }
 
-function setupMovement(bot, movements) {
-  const movement = movementConfig();
-  if (movement.enabled === false) return;
+// ---------------------------------------------------------------------------
+//  Human schedule: quiet hours
+//
+//  A bot that is online 24/7/365 is the one thing no player is. When quiet hours
+//  are on, the bot is genuinely offline inside the window (it does not just go
+//  quiet — the connection is closed), and comes back on its own afterwards.
+// ---------------------------------------------------------------------------
 
-  const pf = loadPathfinder();
-  const hasPathfinder = Boolean(pf.mod && typeof bot.pathfinder === "object" && bot.pathfinder !== null);
-
-  if (movement["look-around"] && movement["look-around"].enabled) {
-    const interval = Math.max(1000, Number(movement["look-around"].interval) || 5000);
-    addBotInterval(() => {
-      if (!runtime.connectedAt) return;
-      try {
-        bot.look(Math.random() * Math.PI * 2 - Math.PI, (Math.random() * Math.PI) / 2 - Math.PI / 4, false);
-        if (watchdog) watchdog.noteMovement();
-      } catch (_err) {
-        /* ignore */
-      }
-    }, interval);
+function setupHumanSchedule() {
+  const hm = humanModeConfig();
+  if (!hm.enabled || !hm.quiet.enabled) return;
+  if (!Number.isFinite(hm.quiet.startHour) || !Number.isFinite(hm.quiet.endHour)) {
+    addLog("[Human] quiet-hours needs start-hour and end-hour — ignoring");
+    return;
   }
 
-  if (movement["circle-walk"] && movement["circle-walk"].enabled && hasPathfinder && movements) {
-    const radius = Math.max(1, Number(movement["circle-walk"].radius) || 4);
-    const interval = Math.max(1000, Number(movement["circle-walk"].speed) || 3000);
-    let angle = 0;
-    addBotInterval(() => {
-      if (!runtime.connectedAt || !bot.entity || !bot.entity.position) return;
-      try {
-        const { GoalBlock } = pf.mod.goals;
-        const base = bot.entity.position;
-        const x = Math.floor(base.x + Math.cos(angle) * radius);
-        const z = Math.floor(base.z + Math.sin(angle) * radius);
-        bot.pathfinder.setMovements(movements);
-        bot.pathfinder.setGoal(new GoalBlock(x, Math.floor(base.y), z));
-        angle += Math.PI / 4;
-        if (watchdog) watchdog.noteMovement();
-      } catch (_err) {
-        /* ignore */
-      }
-    }, interval);
-  } else if (movement["random-jump"] && movement["random-jump"].enabled) {
-    const interval = Math.max(2000, Number(movement["random-jump"].interval) || 10000);
-    addBotInterval(() => {
-      if (!runtime.connectedAt || typeof bot.setControlState !== "function") return;
-      try {
-        bot.setControlState("jump", true);
-        setTimeout(() => {
-          try {
-            bot.setControlState("jump", false);
-          } catch (_err) {
-            /* ignore */
-          }
-        }, 300).unref?.();
-        if (watchdog) watchdog.noteMovement();
-      } catch (_err) {
-        /* ignore */
-      }
-    }, interval);
-  }
-}
-
-function setupPosition(bot, movements) {
-  const position = config.position || {};
-  if (!position.enabled || circleWalkEnabled()) return;
-  const pf = loadPathfinder();
-  if (!pf.mod || !movements || !bot.pathfinder) return;
-  try {
-    const { GoalBlock } = pf.mod.goals;
-    bot.pathfinder.setMovements(movements);
-    bot.pathfinder.setGoal(new GoalBlock(Number(position.x) || 0, Number(position.y) || 64, Number(position.z) || 0));
-    addLog(`[Position] Navigating to ${position.x}, ${position.y}, ${position.z}`);
-  } catch (err) {
-    addLog(`[Position] Could not set goal: ${err.message}`);
-  }
-}
-
-function setupLeaveRejoinModule(bot) {
-  const lr = (config.utils && config.utils["leave-rejoin"]) || {};
-  if (!lr.enabled) return;
-  // leaveRejoin.js schedules a quit; the reconnect scheduler notices the
-  // resulting `end` event and rejoins. It never reconnects on its own.
-  setupLeaveRejoin(bot, () => {
-    addLog("[LeaveRejoin] Scheduled leave — the reconnect scheduler will bring the bot back");
-    scheduleReconnect("leave-rejoin");
-  }, {
-    log: addLog,
-    minStayMs: Number(lr["min-stay-ms"]) || undefined,
-    maxStayMs: Number(lr["max-stay-ms"]) || undefined,
-  });
-}
-
-function setupCombat(bot) {
-  const combat = config.combat || {};
-  if (!combat["attack-mobs"]) return;
-
-  let lastAttack = 0;
-  bot.on("physicsTick", () => {
-    if (!runtime.connectedAt) return;
-    const now = Date.now();
-    if (now - lastAttack < 620) return; // 1.9+ attack cooldown
-    try {
-      const entities = Object.values(bot.entities || {});
-      const target = entities.find(
-        (e) =>
-          e &&
-          e !== bot.entity &&
-          e.type === "mob" &&
-          e.position &&
-          bot.entity &&
-          bot.entity.position.distanceTo(e.position) < 4,
+  const tick = () => {
+    const quiet = isQuietHour(new Date(), hm.quiet.startHour, hm.quiet.endHour);
+    if (quiet && runtime.intent === "running") {
+      runtime.quietStop = true;
+      addLog(
+        `[Human] Quiet hours (${hm.quiet.startHour}:00-${hm.quiet.endHour}:00) — going offline like a person would`,
       );
-      if (target) {
-        bot.attack(target);
-        lastAttack = now;
-        if (watchdog) watchdog.noteMovement();
-      }
-    } catch (_err) {
-      /* ignore */
+      stopBot("quiet hours");
+    } else if (!quiet && runtime.quietStop && runtime.intent === "stopped") {
+      runtime.quietStop = false;
+      addLog("[Human] Quiet hours are over — coming back online");
+      startBot("quiet hours");
     }
-  });
+  };
 
-  if (combat["auto-eat"]) {
-    bot.on("health", () => {
-      try {
-        if (typeof bot.food !== "number" || bot.food >= 14) return;
-        const food = bot.inventory.items().find((item) => item.foodPoints > 0);
-        if (!food) return;
-        bot.equip(food, "hand")
-          .then(() => bot.consume())
-          .catch(() => {});
-      } catch (_err) {
-        /* ignore */
-      }
-    });
-  }
-}
-
-function setupBeds(bot) {
-  const beds = config.beds || {};
-  if (!beds["place-night"]) return;
-  let trying = false;
-  addBotInterval(async () => {
-    if (!runtime.connectedAt || trying) return;
-    try {
-      const time = bot.time && Number(bot.time.timeOfDay);
-      if (!Number.isFinite(time) || time < 12500 || time > 23500) return;
-      const block = bot.findBlock({
-        matching: (b) => b && typeof b.name === "string" && b.name.includes("bed"),
-        maxDistance: 8,
-      });
-      if (!block) return;
-      trying = true;
-      try {
-        await bot.sleep(block);
-        addLog("[Beds] Sleeping");
-      } finally {
-        trying = false;
-      }
-    } catch (_err) {
-      trying = false;
-    }
-  }, 10000);
+  tick();
+  const id = setInterval(tick, 60000);
+  botIntervals.add(id);
+  addLog(`[Human] Quiet hours: offline ${hm.quiet.startHour}:00-${hm.quiet.endHour}:00 local time`);
 }
 
 function setupChatResponder(bot) {
@@ -3525,12 +3495,32 @@ async function boot() {
   }
 
   runtime.intent = "running";
-  runCycle(false).catch((err) => {
-    addLog(`[Boot] Initial connect failed: ${err.message}`);
-    scheduleReconnect("boot-failure");
-  });
 
-  addLog("[Boot] Bot started");
+  const human = humanModeConfig();
+  const quietNow =
+    human.enabled &&
+    human.quiet.enabled &&
+    isQuietHour(new Date(), human.quiet.startHour, human.quiet.endHour);
+
+  if (quietNow) {
+    runtime.quietStop = true;
+    setPhase(
+      "stopped",
+      `Quiet hours (${human.quiet.startHour}:00-${human.quiet.endHour}:00) — offline on purpose`,
+    );
+    addLog(
+      `[Human] Quiet hours (${human.quiet.startHour}:00-${human.quiet.endHour}:00) — not connecting; the schedule will bring the bot back`,
+    );
+  } else {
+    runCycle(false).catch((err) => {
+      addLog(`[Boot] Initial connect failed: ${err.message}`);
+      scheduleReconnect("boot-failure");
+    });
+
+    addLog("[Boot] Bot started");
+  }
+
+  setupHumanSchedule();
 }
 
 /** Graceful shutdown: quit the bot, drop timers, release the lease. */
@@ -3720,6 +3710,13 @@ const exported = {
   pickChatMessage,
   chatState,
   setChatEnabled,
+  pickRandomInt,
+  nextAntiAfkDelayMs,
+  pickAntiAfkAction,
+  isQuietHour,
+  pickRestMs,
+  humanModeConfig,
+  setupHumanSchedule,
   computeBackoff,
   computeDuplicateLoginDelay,
   shouldForceLogin,

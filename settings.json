@@ -24,7 +24,7 @@
     },
     "anti-afk": {
       "enabled": true,
-      "sneak": true
+      "sneak": false
     },
     "chat-messages": {
       "enabled": true,
@@ -51,8 +51,10 @@
     "probe-cache-ms": 5000,
     "leave-rejoin": {
       "enabled": false,
-      "min-stay-ms": 300000,
-      "max-stay-ms": 900000
+      "min-stay-ms": 2700000,
+      "max-stay-ms": 9000000,
+      "rest-min-ms": 600000,
+      "rest-max-ms": 2400000
     },
     "watchdog": {
       "enabled": true,
@@ -61,6 +63,14 @@
       "stall-timeout": 600000,
       "stall-grace": 120000,
       "tick-interval": 5000
+    },
+    "human-mode": {
+      "enabled": true,
+      "quiet-hours": {
+        "enabled": false,
+        "start-hour": 1,
+        "end-hour": 8
+      }
     }
   },
   "movement": {

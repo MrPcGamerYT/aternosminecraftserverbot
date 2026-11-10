@@ -682,6 +682,72 @@ doctor you set `MAIN_FILE=doctor.js` in **Startup** and restart.
    pitch is Discord bots, their terms only rule out web servers, but SillyDev
    suspension stories start with assuming.
 
+## 13. SillyDev, end to end
+
+Everything in this list is a field in their panel, in the order the panel asks.
+
+### Create the server
+
+| Field | Value |
+| --- | --- |
+| Runtime / egg | **Node.js** (18, 20 or 22 — 22 is what their console reports) |
+| Name | anything, e.g. `afk-bot` |
+| Plan | free (256 MB, 1 GB disk) |
+
+### Startup tab
+
+| Field | Value |
+| --- | --- |
+| `MAIN_FILE` | `index.js` — **not** `doctor.js`, or the panel runs the pre-flight check forever |
+| Startup command | leave theirs (`npm start`) — it runs `npm install` first |
+
+### Variables tab
+
+| Name | Value | Why |
+| --- | --- | --- |
+| `NODE_OPTIONS` | `--max-old-space-size=192` | 256 MB container; without this V8 reserves more than it has and the panel kills the process |
+| `DASHBOARD_PASSWORD` | a long random string | the port is public, so the dashboard needs a password |
+| `DASHBOARD_USER` | `admin` | optional, this is the default |
+| `TZ` | `Asia/Kolkata` | makes quiet hours and log timestamps your local time |
+| `MC_SERVER_HOST` / `MC_SERVER_PORT` | optional | overrides `settings.json` without editing files |
+
+`SERVER_PORT` is set by the panel itself — do not touch it, the dashboard binds
+to it automatically.
+
+### Files tab
+
+1. Upload the ZIP, then **unzip into the container root** (`/home/container`). An
+   extra folder is the single most common "it does not start".
+2. Run `npm ci --omit=dev` (or let the first start do it).
+3. Keep `settings.json` with the human-mode block.
+
+### What a healthy start looks like
+
+```
+[Server] Dashboard listening on http://0.0.0.0:6219
+[Server] Dashboard password required (HTTP basic auth)
+[Chat]   Automated messages ON — one random line every ~420s with jitter
+[Human]  Quiet hours: offline 1:00-8:00 local time
+[Bot]    Connecting to ZLAG.aternos.me:39033
+```
+
+Anything else, run `npm run doctor` once (set `MAIN_FILE=doctor.js`, restart, read,
+set it back).
+
+### Dashboard link
+
+**Network** tab → copy the allocation (`IP:PORT` or `node-XX.sillydev.co.uk:PORT`)
+→ open `http://that` → user `admin`, password from your variables.
+
+### Staying out of trouble there
+
+| Rule | Why |
+| --- | --- |
+| Chat gaps of 5-10 minutes, no threats | their terms name chat spam explicitly |
+| No reconnect storms | an old `index.js` did that; `npm run doctor` and the watchdog cover it |
+| One account, one server | a second account after a suspension is ban evasion |
+| Keep `--max-old-space-size` set | OOM kills look like random disconnects |
+
 ## What not to do on the next host
 
 * **Do not deploy this on another PaaS free tier with the self-ping on.** Render,

@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-doctor.js — the pre-flight check itself
 //
-//   npm run test:doctor   (9 tests)
+//   npm run test:doctor   (10 tests)
 //
 // doctor.js is what a user runs when "it did not start" and the
 // only feedback is a panel console. Every failure mode it claims
@@ -181,6 +181,40 @@ test("9. fast repeating chat is flagged as spam, a slow human pace is not", () =
   const off = check({ enabled: false });
   assert.equal(off.status, "ok");
   assert.ok(/off/.test(off.detail), off.detail);
+});
+
+test("10. MAIN_FILE pointing at the doctor is called out, human mode is reported", () => {
+  const chatty = JSON.stringify({
+    "bot-account": { username: "u", type: "offline" },
+    server: { ip: "h.example", port: 25565 },
+    utils: {
+      "chat-messages": { enabled: false },
+      "human-mode": { enabled: true, "quiet-hours": { enabled: true, "start-hour": 23, "end-hour": 7 } },
+    },
+  });
+
+  const doctor = runChecks({ root: sandbox({ ...ALL_FILES, "settings.json": chatty }), env: { MAIN_FILE: "doctor.js", SERVER_PORT: "6219" } });
+  const startFile = doctor.checks.find((c) => c.name === "Start file");
+  assert.equal(startFile.status, "warn");
+  assert.ok(/not the bot/.test(startFile.detail), startFile.detail);
+
+  const normal = runChecks({ root: sandbox({ ...ALL_FILES, "settings.json": chatty }), env: { MAIN_FILE: "index.js" } });
+  assert.equal(normal.checks.find((c) => c.name === "Start file").status, "ok");
+
+  const human = doctor.checks.find((c) => c.name === "Human mode");
+  assert.equal(human.status, "ok");
+  assert.ok(/quiet hours 23:00-7:00/.test(human.detail), human.detail);
+
+  // Quiet hours with a broken window is a warning, not a silent no-op.
+  const broken = JSON.stringify({
+    "bot-account": { username: "u", type: "offline" },
+    server: { ip: "h.example", port: 25565 },
+    utils: { "human-mode": { enabled: true, "quiet-hours": { enabled: true, "start-hour": "x", "end-hour": "y" } } },
+  });
+  const brokenHuman = runChecks({ root: sandbox({ ...ALL_FILES, "settings.json": broken }), env: {} }).checks.find(
+    (c) => c.name === "Human mode",
+  );
+  assert.equal(brokenHuman.status, "warn");
 });
 
 run("doctor");

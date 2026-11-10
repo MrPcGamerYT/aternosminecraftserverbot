@@ -174,7 +174,7 @@ function runChecks(options = {}) {
 
     // Chat is how a bot looks human to a server, but hosts' policies call fast
     // repeating chat "spam" and threats get accounts banned. Judge both.
-    const chat = (config.utils && config.utils["chat-messages"]) || {};
+    const chat = (config && config.utils && config.utils["chat-messages"]) || {};
     const chatMessages = Array.isArray(chat.messages) ? chat.messages.filter(Boolean) : [];
     const repeatEvery = Number(chat["repeat-delay"]) || 120; // seconds in settings.json
     const THREAT = /\b(ban|banned|kick|report|hack|ip ?log|ddos)\w*/i;
@@ -217,6 +217,39 @@ function runChecks(options = {}) {
   ok("Dashboard port", `${httpPort} from ${portSource}` + (explicit > 0 && panel > 0 && explicit !== panel
     ? ` — note: SERVER_PORT is ${panel}, the panel expects that one`
     : ""));
+
+  // ---- 5b. What the panel will actually run ----------------------------
+  // SillyDev/Pterodactyl start whatever MAIN_FILE says. Setting it to
+  // doctor.js (a common trick to see this output) leaves the bot "not
+  // starting" with a perfectly green doctor.
+  const mainFile = String(env.MAIN_FILE || "").trim();
+  if (!mainFile || mainFile === "index.js" || mainFile === "./index.js") {
+    ok("Start file", `${mainFile || "index.js"} (the bot)`);
+  } else if (/doctor\.js$/i.test(mainFile)) {
+    warn(
+      "Start file",
+      `MAIN_FILE=${mainFile} — the panel runs the doctor, not the bot; set it back to index.js after reading this`,
+    );
+  } else {
+    warn("Start file", `MAIN_FILE=${mainFile} — the bot is index.js; the panel will not run it`);
+  }
+
+  // ---- 5c. Human mode --------------------------------------------------
+  const human = (config && config.utils && config.utils["human-mode"]) || {};
+  const quiet = human["quiet-hours"] || {};
+  if (human.enabled === false) {
+    ok("Human mode", "off — fixed behaviour, easiest to spot as a bot");
+  } else if (quiet.enabled === true) {
+    const from = Number(quiet["start-hour"]);
+    const to = Number(quiet["end-hour"]);
+    if (Number.isFinite(from) && Number.isFinite(to) && from !== to) {
+      ok("Human mode", `quiet hours ${from}:00-${to}:00 — the bot is offline then, like a person asleep`);
+    } else {
+      warn("Human mode", "quiet-hours is enabled but start-hour/end-hour are not usable numbers");
+    }
+  } else {
+    ok("Human mode", "on — jittered anti-AFK, random chat; quiet hours off (24/7)");
+  }
 
   // ---- 6. Host hints ---------------------------------------------------
   const hints = [];
