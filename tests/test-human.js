@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-human.js — behaviour that does not look like a cron
 //
-//   npm run test:human   (16 tests)
+//   npm run test:human   (18 tests)
 //
 // A ternos (and every other server) notices regularity: one action
 // every 45s, forever, is not something a person does. These tests
@@ -243,6 +243,58 @@ test("16. micro-steps stop at the chunk we already loaded", () => {
   assert.ok(/setupLiteHumanActivity\(bot\)/.test(antiAfk), "lite mode is not wired into anti-AFK");
   const lite = source.slice(source.indexOf("function setupLiteHumanActivity"), source.indexOf("function setupHumanSchedule"));
   assert.ok(/bot\.on\("chat"/.test(lite) && /bot\.on\("playerJoined"/.test(lite), "reactions missing");
+});
+
+test("17. walks are minutes apart and measured in blocks, not pathfinding", () => {
+  const cfg = index.liteWalkConfig();
+  assert.equal(cfg.enabled, true, "walking ships on");
+  assert.ok(cfg.minGap >= 30000, "a walk every 30s is not a slow clock");
+  assert.ok(cfg.maxGap >= cfg.minGap);
+
+  const blocks = Array.from({ length: 300 }, () => index.pickWalkBlocks(cfg));
+  assert.ok(Math.min(...blocks) >= cfg.minBlocks);
+  assert.ok(Math.max(...blocks) <= cfg.maxBlocks);
+
+  const gaps = Array.from({ length: 300 }, () => index.nextWalkGapMs(cfg));
+  assert.ok(Math.min(...gaps) >= cfg.minGap && Math.max(...gaps) <= cfg.maxGap);
+  assert.ok(new Set(gaps).size > 50, "gaps are too regular");
+
+  // A walk is a held key for a computed time, capped so it cannot become
+  // minutes of chunk loading.
+  assert.equal(index.walkPlanMs(1) >= 400, true);
+  assert.ok(index.walkPlanMs(99) <= 6250, `plan not capped: ${index.walkPlanMs(99)}`);
+  assert.ok(index.walkPlanMs(10) > index.walkPlanMs(3), "more blocks must mean more time");
+  assert.ok(Math.abs(index.walkPlanMs(4.3, () => 0) - 1000) <= 1, "4.3 blocks should be about a second");
+
+  // Bad config cannot turn it into a marathon.
+  const saved = JSON.parse(JSON.stringify(index.config.performance || {}));
+  try {
+    index.config.performance = { enabled: true, walk: { enabled: true, "min-blocks": 0, "max-blocks": -5, "min-gap-ms": 1, "max-gap-ms": 2 } };
+    const clamped = index.liteWalkConfig();
+    assert.equal(clamped.minBlocks, 1);
+    assert.equal(clamped.maxBlocks >= clamped.minBlocks, true);
+    assert.ok(clamped.minGap >= 30000);
+
+    index.config.performance = { enabled: true, walk: { enabled: false } };
+    assert.equal(index.liteWalkConfig().enabled, false, "walking can be switched off");
+  } finally {
+    index.config.performance = saved;
+  }
+});
+
+test("18. the wander is wired in and never calls the pathfinder", () => {
+  const fs = require("fs");
+  const path = require("path");
+  const source = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+  const lite = source.slice(source.indexOf("function setupLiteHumanActivity"), source.indexOf("function setupHumanSchedule"));
+
+  assert.ok(/const takeWalk = /.test(lite), "no walk function");
+  assert.ok(/nextWalkGapMs\(walk\)/.test(lite), "walks are not on their own clock");
+  assert.ok(/setControlState\("forward", true\)/.test(lite), "a walk must be a held key");
+  assert.ok(/setControlState\("forward", false\)/.test(lite), "a walk must always stop");
+  assert.ok(!/bot\.pathfinder|GoalBlock|GoalNear/.test(lite), "lite mode must not pathfind");
+  // stuck detection: a walk into a wall has to end early
+  assert.ok(/moved < 0\.4/.test(lite), "no stuck check");
 });
 
 run("human");

@@ -12,7 +12,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 npm install
 npm run doctor     # pre-flight: node version, files, deps, target, port
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 204 tests, no framework, no network
+npm run test:all   # 206 tests, no framework, no network
 ```
 
 ---
@@ -415,6 +415,26 @@ the parts of a person that cost one packet.
 | look / swing / hotbar / sneak / jump on one 20-90 s metronome | weighted mix — look 50%, step 17%, swing 14%, hotbar 9%, jump 6%, nothing 4% |
 | one action at a time, evenly spaced | **bursts**: 1-4 actions 1.2-5.5 s apart, then a 60-150 s rest |
 | view distance default (~200 chunks from the server) | `tiny` |
+| nothing that travels | a **wander**: one held `forward` for 3-10 blocks, every 3-7 minutes |
+
+The wander is the one action that costs chunks, so it is the only one on a slow
+clock. It is a held key, not a pathfinder: no plan, nothing to re-plan, and a
+distance check stops it after ~a second if a wall is in the way.
+
+```json
+"performance": {
+  "enabled": true,
+  "walk": { "enabled": true, "min-blocks": 3, "max-blocks": 10,
+            "min-gap-ms": 180000, "max-gap-ms": 420000 }
+}
+```
+
+```
+[Perf] Lite activity: bursts of look/step/swing, reactions to chat and joins, a 3-10 block wander every 3-7min
+[Perf] Walked ~6.2 block(s)
+```
+
+Set `"walk": { "enabled": false }` for a bot that never leaves its spawn point.
 
 Micro-steps are the trick that makes it cheap *and* alive: walking inside a chunk
 we already have costs a few position packets, and the 2.5 m drift limit means the
@@ -459,6 +479,33 @@ Sending a message also refreshes the **Recent activity** list, so you can see th
 `[Console] Sent: …` line immediately instead of waiting for a page reload.
 `GET /logs.json?lines=40` is the endpoint behind it (and it respects
 `DASHBOARD_PATH` and `DASHBOARD_PASSWORD` like everything else).
+
+### Turn the server down too
+
+The client was never the whole bill — the server side is. These are `server.properties`
+values on Aternos (**Files → `server.properties` → edit → Save → Restart**), and
+they cut the world work the bot's presence triggers:
+
+| Key | Default | Set to | Why |
+| --- | --- | --- | --- |
+| `view-distance` | 10 | `4` | chunks sent to **every** player, including the bot |
+| `simulation-distance` | 10 | `4` | chunks that tick: mobs, plants, redstone |
+| `entity-broadcast-range-percentage` | 100 | `50` | entity updates travel half as far |
+| `max-players` | 20 | `5` | fewer slots to keep hot |
+
+Paper/Spigot extras, if your server has those files:
+
+| File | Key | Set to |
+| --- | --- | --- |
+| `spigot.yml` | `world-settings.default.entity-activation-range` (animals / monsters / misc) | `16` / `24` / `8` |
+| `bukkit.yml` | `spawn-limits` (monsters / animals / water-ambient) | `20` / `10` / `5` |
+| `bukkit.yml` | `chunk-gc.period-in-ticks` | `600` |
+| `paper-world-defaults.yml` | `chunks.max-auto-save-chunks-per-tick` | `8` |
+
+Honest limits: Aternos' free plan has a fixed RAM/CPU allowance you cannot raise —
+these keys only lower what the world asks of it. And `view-distance: 4` is also why
+the bot's wanders are affordable: each block it walks lands in a chunk the server
+was already streaming.
 
 ### The honest part
 
@@ -856,7 +903,7 @@ online is normal.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 15 suites (204 tests)
+npm run test:all          # syntax + all 15 suites (206 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -869,7 +916,7 @@ npm run test:all          # syntax + all 15 suites (204 tests)
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
 | `test-chat.js` | 13 |
-| `test-human.js` | 16 | Behaviour that does not look like a cron: anti-AFK gaps are 20–90 s and actually vary, actions are weighted (look/swing dominate), quiet hours handle windows that wrap midnight, breaks are 10–40 min, a source scan fails the build if the old 45 s/60 s fixed timers come back, and every `guard()` in `initializeModules` must name a function that exists — the check that would have caught the release where five modules were armed but undefined; the first anti-AFK action lands 5–15 s after a join instead of up to 90 s; and a panel pinning `Etc/UTC` does not defeat `timezone` in `settings.json` (a real zone from the panel still wins; and lite mode skips movement/position/combat/beds, maps an unknown view distance to `tiny`, and quiets actions to 60–150 s while filtering out jump/sneak. | Chat that reads like a person: every gap is 60–140% of `repeat-delay` with a 5 s floor, the same line never repeats back to back even with a degenerate random source, one-line and empty lists behave, 420 s averages 6–8 minutes; and the console box sends chat, refuses shell commands (`npm install` gets an explanation instead of "not connected") reports stopped vs not-connected correctly; and `/chat off` (or the dashboard button) is a hard stop that clears the timer, not a shorter delay. |
+| `test-human.js` | 18 | Behaviour that does not look like a cron: anti-AFK gaps are 20–90 s and actually vary, actions are weighted (look/swing dominate), quiet hours handle windows that wrap midnight, breaks are 10–40 min, a source scan fails the build if the old 45 s/60 s fixed timers come back, and every `guard()` in `initializeModules` must name a function that exists — the check that would have caught the release where five modules were armed but undefined; the first anti-AFK action lands 5–15 s after a join instead of up to 90 s; and a panel pinning `Etc/UTC` does not defeat `timezone` in `settings.json` (a real zone from the panel still wins; and lite mode skips movement/position/combat/beds, maps an unknown view distance to `tiny`, and quiets actions to 60–150 s while filtering out jump/sneak. | Chat that reads like a person: every gap is 60–140% of `repeat-delay` with a 5 s floor, the same line never repeats back to back even with a degenerate random source, one-line and empty lists behave, 420 s averages 6–8 minutes; and the console box sends chat, refuses shell commands (`npm install` gets an explanation instead of "not connected") reports stopped vs not-connected correctly; and `/chat off` (or the dashboard button) is a hard stop that clears the timer, not a shorter delay. |
 | `test-envfile.js` | 9 | `.env` parsing (comments, `export`, quotes, junk lines, CRLF), a real panel variable always beats the file, missing/unreadable files are not errors, and the dashboard can be configured from `settings.json` when the host has no Variables tab, including the listen port, with the panel's `PORT`/`SERVER_PORT` still winning; and `timezone` is applied before the first `Date` (Node caches the zone, so a late set does nothing). |
 | `test-dashboard-auth.js` | 11 | Optional dashboard password: off with no env var, 401 + `WWW-Authenticate` without one, accepted with the right user/password, wrong user/password/garbage rejected, `/ping` `/health` `/mirror/status` left open for health checks, tricky passwords (`:`, unicode) still work; a `DASHBOARD_PATH` hides the root with a 404, rewrites the prefixed URL, keeps health at the root, and normalises slashes; every internal URL on a page is rewritten to the secret path (this is why the chat box used to post to `/command` and 404), and `/logs.json` serves the log tail. |
 | `test-doctor.js` | 10 | The pre-flight check: a real checkout passes, a ZIP with an extra folder is explained with the `mv` that fixes it, missing `node_modules` names the command, broken `settings.json` and an empty target fail, Node 18 fails / 25 warns, `SERVER_PORT` becomes the reported port, Vercel without `BOT_BACKEND_URL` is a hard failure, and a half-written `node_modules` is caught when mineflayer is required instead of at login. |

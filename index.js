@@ -120,6 +120,7 @@ const DEFAULT_CONFIG = {
     "view-distance": "tiny",
     "quiet-actions": true,
     "looks-human": true,
+    walk: { enabled: true, "min-blocks": 3, "max-blocks": 10, "min-gap-ms": 180000, "max-gap-ms": 420000 },
   },
   movement: {
     enabled: true,
@@ -2063,6 +2064,7 @@ function performanceConfig() {
     viewDistance: ["tiny", "short", "normal", "far"].includes(distance) ? distance : "tiny",
     quietActions: perf["quiet-actions"] !== false,
     looksHuman: perf["looks-human"] !== false,
+    walk: liteWalkConfig(),
   };
 }
 
@@ -2116,6 +2118,43 @@ function humanBurstGapMs(random = Math.random) {
 
 /** Walking further than this from where we logged in starts loading new chunks. */
 const MICRO_STEP_DRIFT_LIMIT = 2.5;
+
+/** A walk is the one action that costs the server chunks, so it is on a slow clock. */
+function liteWalkConfig() {
+  const perf = (config && config.performance) || {};
+  const walk = perf.walk || {};
+  const num = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
+  const minBlocks = Math.max(1, Math.trunc(num(walk["min-blocks"], 3)));
+  const maxBlocks = Math.max(minBlocks, Math.trunc(num(walk["max-blocks"], 10)));
+  const minGap = Math.max(30000, Math.trunc(num(walk["min-gap-ms"], 180000)));
+  const maxGap = Math.max(minGap, Math.trunc(num(walk["max-gap-ms"], 420000)));
+  return { enabled: walk.enabled !== false, minBlocks, maxBlocks, minGap, maxGap };
+}
+
+/** Walking speed of a player, blocks per second — used to turn "6 blocks" into ms. */
+const WALK_BLOCKS_PER_SECOND = 4.3;
+
+/**
+ * How long to hold `forward` for a walk of `blocks` blocks.
+ *
+ * Held-key walking (no pathfinder) is a guess, so the plan is capped: past ~6s a
+ * "short wander" turns into chunk loading, which is the CPU problem again.
+ */
+function walkPlanMs(blocks, random = Math.random) {
+  const wanted = Math.max(1, Math.min(24, Number(blocks) || 1));
+  const raw = Math.round((wanted / WALK_BLOCKS_PER_SECOND) * 1000);
+  return Math.max(400, Math.min(6000, raw)) + pickRandomInt(0, 250, random);
+}
+
+/** Blocks for the next walk, inside the configured range. */
+function pickWalkBlocks(cfg = liteWalkConfig(), random = Math.random) {
+  return pickRandomInt(cfg.minBlocks, cfg.maxBlocks, random);
+}
+
+/** Gap before the next walk: minutes, not seconds. */
+function nextWalkGapMs(cfg = liteWalkConfig(), random = Math.random) {
+  return pickRandomInt(cfg.minGap, cfg.maxGap, random);
+}
 
 /**
  * A micro-step is only cheap while it stays in the chunk we already have, and
@@ -2462,6 +2501,8 @@ function lookAtPlayer(bot, username, delayMs) {
 
 function setupLiteHumanActivity(bot) {
   const physicsOn = () => bot.physicsEnabled !== false;
+  const walk = liteWalkConfig();
+  let walkAt = walk.enabled ? Date.now() + nextWalkGapMs(walk) : Infinity;
   let anchor = null;
   let burstRemaining = 0;
   let nextAt = Date.now() + firstAntiAfkDelayMs();
@@ -2532,8 +2573,91 @@ function setupLiteHumanActivity(bot) {
     // "idle" does nothing at all, and that is the point.
   };
 
+  /**
+   * One short wander: pick a heading, hold `forward` for a few blocks' worth of
+   * time, then stop and make the new spot the anchor.
+   *
+   * No pathfinder — held keys cannot fail, plan, or re-plan. If the bot is
+   * against a wall the distance check stops it after about a second instead of
+   * grinding geometry for the whole plan.
+   */
+  const takeWalk = () => {
+    if (!walk.enabled || !physicsOn()) return false;
+    if (typeof bot.setControlState !== "function" || !bot.entity || !bot.entity.position) return false;
+
+    let startPos = null;
+    try {
+      startPos = bot.entity.position.clone();
+      bot.look(Math.random() * Math.PI * 2 - Math.PI, 0, true);
+    } catch (_err) {
+      return false;
+    }
+
+    const planMs = walkPlanMs(pickWalkBlocks(walk));
+    const finish = () => {
+      try {
+        bot.setControlState("forward", false);
+      } catch (_err) {
+        /* ignore */
+      }
+      // The new spot becomes home for micro-steps, so the next half-steps stay
+      // inside the chunks this walk just loaded.
+      let walked = 0;
+      try {
+        if (bot.entity && bot.entity.position) {
+          walked = bot.entity.position.distanceTo(startPos);
+          anchor = bot.entity.position.clone();
+        }
+      } catch (_err) {
+        walked = 0;
+      }
+      addLog(`[Perf] Walked ~${walked.toFixed(1)} block(s)`);
+    };
+
+    try {
+      bot.setControlState("forward", true);
+    } catch (_err) {
+      return false;
+    }
+
+    const stopTimer = setTimeout(finish, planMs);
+    if (stopTimer.unref) stopTimer.unref();
+
+    const checkTimer = setTimeout(() => {
+      let moved = 0;
+      try {
+        moved = bot.entity && bot.entity.position ? bot.entity.position.distanceTo(startPos) : 0;
+      } catch (_err) {
+        moved = 0;
+      }
+      if (moved < 0.4) {
+        clearTimeout(stopTimer);
+        finish();
+        // A wall ahead: face somewhere else before the next attempt.
+        try {
+          bot.look(Math.random() * Math.PI * 2 - Math.PI, 0, true);
+        } catch (_err) {
+          /* ignore */
+        }
+      }
+    }, Math.min(1200, Math.max(600, Math.round(planMs / 2))));
+    if (checkTimer.unref) checkTimer.unref();
+
+    return true;
+  };
+
   addBotInterval(() => {
     if (!runtime.connectedAt) return;
+    // Walks run on their own slow clock: every few minutes, not every burst.
+    if (walk.enabled && physicsOn() && Date.now() >= walkAt) {
+      walkAt = Date.now() + nextWalkGapMs(walk);
+      rememberAnchor();
+      if (takeWalk()) {
+        nextAt = Date.now() + humanBurstGapMs();
+        if (watchdog) watchdog.noteMovement();
+        return;
+      }
+    }
     if (Date.now() < nextAt) return;
     rememberAnchor();
 
@@ -2577,7 +2701,12 @@ function setupLiteHumanActivity(bot) {
     addLog(`[Perf] Reactions unavailable: ${err && err.message ? err.message : "unknown"}`);
   }
 
-  addLog("[Perf] Lite activity: bursts of look/step/swing, reactions to chat and joins");
+  addLog(
+    "[Perf] Lite activity: bursts of look/step/swing, reactions to chat and joins" +
+      (walk.enabled
+        ? `, a ${walk.minBlocks}-${walk.maxBlocks} block wander every ${Math.round(walk.minGap / 60000)}-${Math.round(walk.maxGap / 60000)}min`
+        : ", no walking"),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -4405,6 +4534,11 @@ const exported = {
   humanBurstGapMs,
   shouldMicroStep,
   MICRO_STEP_DRIFT_LIMIT,
+  liteWalkConfig,
+  walkPlanMs,
+  pickWalkBlocks,
+  nextWalkGapMs,
+  WALK_BLOCKS_PER_SECOND,
   dashboardBase,
   withDashboardBase,
   noteAuthPrompt,

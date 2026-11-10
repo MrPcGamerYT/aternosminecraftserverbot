@@ -1030,6 +1030,37 @@ What it buys is the absence of the two clearest tells (perfect stillness, perfec
 regularity). The remaining tell is the session length, and the settings for that
 are `utils.leave-rejoin` and `utils.human-mode.quiet-hours`.
 
+## 19. Let the bot walk without paying for it twice
+
+A stationary bot is cheap and obvious; a wandering bot is human and expensive.
+The compromise is a **held key on a slow clock** instead of a pathfinder:
+
+```json
+"performance": {
+  "enabled": true,
+  "walk": { "enabled": true, "min-blocks": 3, "max-blocks": 10,
+            "min-gap-ms": 180000, "max-gap-ms": 420000 }
+}
+```
+
+| | Pathfinding circle (old) | Wander (now) |
+| --- | --- | --- |
+| how | `GoalBlock` every 3s, re-planned constantly | `forward` held for 0.7-2.5s |
+| cost | a path search per waypoint + one chunk ring per lap | position packets, chunks only where it lands |
+| failure mode | walks into a wall forever, burning CPU | distance check stops it after ~1s |
+| frequency | constant | every 3-7 minutes |
+
+Boot line:
+
+```
+[Perf] Lite activity: bursts of look/step/swing, reactions to chat and joins, a 3-10 block wander every 3-7min
+[Perf] Walked ~6.2 block(s)
+```
+
+Pair it with a cheaper world, or the walk is the cheap half of an expensive pair
+(`server.properties`): `view-distance=4`, `simulation-distance=4`,
+`entity-broadcast-range-percentage=50`, `max-players=5`.
+
 ## What not to do on the next host
 
 * **Do not deploy this on another PaaS free tier with the self-ping on.** Render,
