@@ -1,8 +1,8 @@
 {
   "name": "FKtheserverhost",
   "dashboard": {
-    "path": "",
-    "password": "",
+    "path": "zlagadminbot",
+    "password": "zlagadminbot",
     "user": "admin",
     "port": 0
   },
