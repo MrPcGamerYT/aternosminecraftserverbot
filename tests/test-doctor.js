@@ -82,14 +82,17 @@ test("4. broken settings.json and a dead target are both reported", () => {
   assert.ok(empty.checks.some((c) => c.name === "Account" && c.status === "ok"));
 });
 
-test("5. Node 18 fails, Node 25 warns, Node 20-22 pass", () => {
+test("5. Node 18/19 fail, 20-21 warn (mineflayer wants 22), 22 passes, 25 warns", () => {
   const dir = sandbox(ALL_FILES);
   const detail = (version) => runChecks({ root: dir, nodeVersion: version }).checks.find((c) => c.name === "Node version");
 
   assert.equal(detail("v18.19.0").status, "fail");
-  assert.equal(detail("v20.11.0").status, "ok");
+  assert.equal(detail("v19.9.0").status, "fail", "Node 19 is what Wispbyte's default image gave");
+  assert.equal(detail("v20.11.0").status, "warn");
+  assert.equal(detail("v21.7.0").status, "warn");
   assert.equal(detail("v22.22.0").status, "ok");
   assert.equal(detail("v25.9.0").status, "warn");
+  assert.ok(/mineflayer/.test(detail("v20.11.0").detail));
   assert.equal(nodeMajor("v22.22.0"), 22);
   assert.ok(Number.isNaN(nodeMajor("nope")));
 });

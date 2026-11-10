@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-envfile.js — variables without a Variables tab
 //
-//   npm run test:envfile   (7 tests)
+//   npm run test:envfile   (9 tests)
 //
 // SillyDev's panel does not always expose environment variables,
 // and a Pterodactyl startup tab is easy to lose. A `.env` file in
@@ -111,6 +111,42 @@ test("7. a password in settings.json still turns on basic auth", () => {
   } finally {
     index.config.dashboard = saved;
   }
+});
+
+test("8. the dashboard port can be pinned in settings.json", () => {
+  const fs = require("fs");
+  const path = require("path");
+  const source = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+  // resolveHttpPort is exported; drive it directly rather than guessing.
+  const index = require("../index.js");
+  assert.equal(typeof index.resolveHttpPort, "function");
+
+  const saved = JSON.parse(JSON.stringify(index.config.dashboard || {}));
+  try {
+    index.config.dashboard = { port: 10108 };
+    assert.equal(index.resolveHttpPort({}), 10108, "settings.json is the last resort, not the first");
+
+    assert.equal(index.resolveHttpPort({ SERVER_PORT: "7000" }), 7000, "the panel's port wins");
+    assert.equal(index.resolveHttpPort({ PORT: "8080", SERVER_PORT: "7000" }), 8080, "PORT wins over SERVER_PORT");
+
+    index.config.dashboard = {};
+    assert.equal(index.resolveHttpPort({}), 5000, "no hint at all means 5000");
+  } finally {
+    index.config.dashboard = saved;
+  }
+  assert.ok(/fromSettings/.test(source) || /config\.dashboard/.test(source));
+});
+
+test("9. timezone from settings.json is applied before the first Date", () => {
+  // Node caches the zone on first use, so this must happen at module load.
+  const { execFileSync } = require("child_process");
+  const path = require("path");
+  const out = execFileSync(
+    process.execPath,
+    ["-e", "require('./index.js'); console.log(process.env.TZ + '|' + new Date().getTimezoneOffset());"],
+    { cwd: path.join(__dirname, ".."), env: { ...process.env, TZ: "" }, encoding: "utf8" },
+  ).trim();
+  assert.equal(out, "Asia/Kolkata|-330", out);
 });
 
 run("envfile");

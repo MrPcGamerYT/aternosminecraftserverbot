@@ -34,6 +34,8 @@ const REQUIRED_FILES = [
 const REQUIRED_MODULES = ["express", "mineflayer", "minecraft-data"];
 
 const MIN_NODE = 20;
+// mineflayer 4.39 / minecraft-protocol 1.68 declare `engines.node: >=22`.
+const MINEFLAYER_NODE = 22;
 const MAX_NODE_EXCLUSIVE = 23;
 
 /** Major version of a `node -v` style string, or NaN. */
@@ -66,7 +68,16 @@ function runChecks(options = {}) {
   if (!Number.isFinite(major)) {
     warn("Node version", "could not parse the version");
   } else if (major < MIN_NODE) {
-    fail("Node version", `${nodeVersion} is too old — this repo needs ${MIN_NODE}-${MAX_NODE_EXCLUSIVE - 1}`);
+    fail(
+      "Node version",
+      `${nodeVersion} is too old — mineflayer 4.39 needs Node 22; pick a Node 22 image on the panel`,
+    );
+  } else if (major < MINEFLAYER_NODE) {
+    warn(
+      "Node version",
+      `${nodeVersion}: the bot may start, but mineflayer 4.39+ declares node >=22 — switch the runtime to 22 ` +
+        "(npm WARN EBADENGINE is the same warning)",
+    );
   } else if (major >= MAX_NODE_EXCLUSIVE) {
     warn(
       "Node version",
@@ -74,7 +85,7 @@ function runChecks(options = {}) {
         "it usually runs, but pick Node 22 on the panel if the session misbehaves",
     );
   } else {
-    ok("Node version", nodeVersion);
+    ok("Node version", `${nodeVersion} (meets mineflayer's >=22)`);
   }
 
   // ---- 2. Files in the right place ------------------------------------
@@ -292,6 +303,20 @@ function runChecks(options = {}) {
     }
   } else {
     ok("Human mode", "on — jittered anti-AFK, random chat; quiet hours off (24/7)");
+  }
+
+  // ---- 5d. CPU profile --------------------------------------------------
+  // Aternos stops a whole server for high CPU, and a client that paths around,
+  // jumps and loads chunks is the expensive part. Say which profile is live.
+  const perf = (config && config.performance) || {};
+  if (perf.enabled === true) {
+    ok(
+      "CPU profile",
+      `lite — view distance ${perf["view-distance"] || "tiny"}, physics ${perf.physics === false ? "off" : "on"}, ` +
+        "actions every 60-150s, movement/position/combat/beds skipped",
+    );
+  } else {
+    ok("CPU profile", "normal — full modules (movement, combat, beds)");
   }
 
   // ---- 6. Host hints ---------------------------------------------------

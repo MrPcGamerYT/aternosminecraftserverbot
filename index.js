@@ -19,6 +19,22 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+
+// Time zone first, before anything can format a date: Node reads process.env.TZ
+// once and caches it, so setting it after the first Date is too late. Hosts
+// without a Variables tab get their zone from settings.json.
+const PANEL_TZ = process.env.TZ || "";
+const TZ_IS_GENERIC_UTC = /^(Etc\/UTC|UTC|GMT|Etc\/GMT|Etc\/UCT|UCT|Zulu)$/i.test(PANEL_TZ.trim());
+if (!PANEL_TZ || TZ_IS_GENERIC_UTC) {
+  try {
+    const rawSettings = JSON.parse(fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"));
+    const wantedZone = String(rawSettings.timezone || "").trim();
+    // A panel that pins Etc/UTC is not a choice the user made; settings.json is.
+    if (wantedZone && !/^(Etc\/UTC|UTC|GMT)$/i.test(wantedZone)) process.env.TZ = wantedZone;
+  } catch (_err) {
+    /* no settings.json yet, or it is being edited — the default zone is fine */
+  }
+}
 const http = require("http");
 const crypto = require("crypto");
 const https = require("https");
@@ -97,6 +113,12 @@ const DEFAULT_CONFIG = {
       "stall-grace": 120000,
       "tick-interval": 5000,
     },
+  },
+  performance: {
+    enabled: false,
+    physics: true,
+    "view-distance": "tiny",
+    "quiet-actions": true,
   },
   movement: {
     enabled: true,
@@ -1672,6 +1694,29 @@ function wireBotEvents(bot) {
       sendDiscordWebhook(`✅ **Connected** to \`${serverTarget.label}\``, 0x3fb950);
     }
 
+    // ---- PERFORMANCE PROFILE --------------------------------------------
+    // Standing still is free; simulating gravity, pathing and loading chunks is
+    // not. On Aternos a chatty client is enough to get the whole server stopped
+    // for high CPU, so lite mode turns the expensive parts off first.
+    try {
+      const perf = performanceConfig();
+      if (perf.enabled) {
+        if (typeof bot.setSettings === "function") {
+          bot.setSettings({ viewDistance: perf.viewDistance });
+        } else if (bot.settings) {
+          bot.settings.viewDistance = perf.viewDistance;
+        }
+        if (!perf.physics && "physicsEnabled" in bot) bot.physicsEnabled = false;
+        addLog(
+          `[Perf] Lite mode: view distance ${perf.viewDistance}` +
+            (perf.physics ? "" : ", physics off") +
+            (perf.quietActions ? ", actions every 60-150s" : ""),
+        );
+      }
+    } catch (err) {
+      addLog(`[Perf] Profile could not be applied: ${err.message}`);
+    }
+
     // ---- MODULE INIT ---------------------------------------------------
     // Everything below runs inside a try/catch. A bad settings value or
     // a module API mismatch must degrade the bot, not kill the session.
@@ -1912,14 +1957,17 @@ function initializeModules(bot, mcData) {
   addLog("[Modules] Initializing modules…");
   const movements = buildMovements(bot, mcData);
 
+  const skipped = new Set(disabledModulesFor());
+  if (skipped.size > 0) addLog(`[Perf] Skipping ${[...skipped].join(", ")} to keep CPU low`);
+
   guard("auto-auth", () => setupAutoAuth(bot));
   guard("chat-messages", () => setupChatMessages(bot));
   guard("anti-afk", () => setupAntiAfk(bot));
-  guard("movement", () => setupMovement(bot, movements));
-  guard("position", () => setupPosition(bot, movements));
+  if (!skipped.has("movement")) guard("movement", () => setupMovement(bot, movements));
+  if (!skipped.has("position")) guard("position", () => setupPosition(bot, movements));
   guard("leave-rejoin", () => setupLeaveRejoinModule(bot));
-  guard("combat", () => setupCombat(bot, mcData));
-  guard("beds", () => setupBeds(bot));
+  if (!skipped.has("combat")) guard("combat", () => setupCombat(bot, mcData));
+  if (!skipped.has("beds")) guard("beds", () => setupBeds(bot));
   guard("chat", () => setupChatResponder(bot));
 
   addLog(`[Modules] Ready (${botIntervals.size} interval(s) armed)`);
@@ -1973,6 +2021,35 @@ function setupAutoAuth(bot) {
   setTimeout(() => tryAuth("login"), 10000).unref?.();
 }
 
+/** The `performance` block, with the defaults that keep a session cheap. */
+function performanceConfig() {
+  const perf = (config && config.performance) || {};
+  const distance = String(perf["view-distance"] || "tiny").trim().toLowerCase();
+  return {
+    enabled: perf.enabled === true,
+    physics: perf.physics === false ? false : true,
+    // mineflayer speaks these names; anything unknown falls back to tiny.
+    viewDistance: ["tiny", "short", "normal", "far"].includes(distance) ? distance : "tiny",
+    quietActions: perf["quiet-actions"] !== false,
+  };
+}
+
+/** Modules that are pure CPU on a server we only want to stay in. */
+function disabledModulesFor(perf = performanceConfig()) {
+  if (!perf.enabled) return [];
+  return ["movement", "position", "combat", "beds"];
+}
+
+/**
+ * The gap between anti-AFK actions in lite mode: 60-150s.
+ *
+ * Still human (nobody twitches every 20 seconds for hours), and it costs the
+ * server far fewer entity updates and chunk loads than the normal beat.
+ */
+function nextLightAntiAfkDelayMs(random = Math.random) {
+  return pickRandomInt(60000, 150000, random);
+}
+
 /** Uniform integer in [min, max], inclusive, from an injectable RNG. */
 function pickRandomInt(min, max, random = Math.random) {
   const lo = Math.ceil(Number(min));
@@ -1992,6 +2069,17 @@ function pickRandomInt(min, max, random = Math.random) {
  */
 function nextAntiAfkDelayMs(random = Math.random) {
   return pickRandomInt(20000, 90000, random);
+}
+
+/**
+ * The first action after a join: 5-15s.
+ *
+ * Servers with an idle-kick plugin (and Aternos' own checks) look at the first
+ * moments; a bot that stands perfectly still for a minute and a half looks
+ * exactly like what it is. After this, the slower 20-90s beat takes over.
+ */
+function firstAntiAfkDelayMs(random = Math.random) {
+  return pickRandomInt(5000, 15000, random);
 }
 
 /**
@@ -2190,13 +2278,18 @@ function setupAntiAfk(bot) {
 
   // One jittered loop instead of three metronomes. Every tick decides whether
   // it is time for something, and what.
-  let nextAt = Date.now() + nextAntiAfkDelayMs();
+  const perf = performanceConfig();
+  const gap = () => (perf.enabled && perf.quietActions ? nextLightAntiAfkDelayMs() : nextAntiAfkDelayMs());
+  let nextAt = Date.now() + firstAntiAfkDelayMs();
   addBotInterval(() => {
     if (!runtime.connectedAt) return;
     if (Date.now() < nextAt) return;
-    nextAt = Date.now() + nextAntiAfkDelayMs();
+    nextAt = Date.now() + gap();
 
-    const action = pickAntiAfkAction();
+    let action = pickAntiAfkAction();
+    // Jumping and sneaking push entity updates to every nearby player and cost
+    // the server real work; looking and swinging do not.
+    if (perf.enabled && (action === "jump" || action === "sneak")) action = "look";
     try {
       if (action === "swing") {
         if (typeof bot.swingArm === "function") bot.swingArm();
@@ -3617,6 +3710,9 @@ function resolveHttpPort(source = env) {
   if (Number.isFinite(explicit) && explicit > 0) return explicit;
   const panel = Number(source.SERVER_PORT);
   if (Number.isFinite(panel) && panel > 0) return panel;
+  // Hosts without a Variables tab can pin the port in settings.json instead.
+  const fromSettings = Number((config.dashboard && config.dashboard.port) || config.port);
+  if (Number.isFinite(fromSettings) && fromSettings > 0) return fromSettings;
   return 5000;
 }
 
@@ -3715,7 +3811,13 @@ function printBanner() {
   if (envFileInfo && envFileInfo.loaded > 0) {
     addLog(`[Config] .env: ${envFileInfo.loaded} variable(s) — ${envFileInfo.keys.join(", ")}`);
   }
-  if (process.env.TZ) addLog(`[Config] Time zone: ${process.env.TZ}`);
+  if (process.env.TZ) {
+    const fromSettings = PANEL_TZ !== process.env.TZ;
+    addLog(
+      `[Config] Time zone: ${process.env.TZ}` +
+        (fromSettings ? ` (settings.json; the panel said ${PANEL_TZ || "nothing"})` : ""),
+    );
+  }
   const dash = resolveDashboard(env);
   if (dash.password) addLog("[Config] Dashboard: password required");
   else if (dash.path) addLog(`[Config] Dashboard: secret link /${dash.path.replace(/^\/+/, "")}`);
@@ -3981,11 +4083,15 @@ const exported = {
   setChatEnabled,
   pickRandomInt,
   nextAntiAfkDelayMs,
+  firstAntiAfkDelayMs,
   pickAntiAfkAction,
   isQuietHour,
   pickRestMs,
   humanModeConfig,
   setupHumanSchedule,
+  performanceConfig,
+  disabledModulesFor,
+  nextLightAntiAfkDelayMs,
   computeBackoff,
   computeDuplicateLoginDelay,
   shouldForceLogin,

@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-human.js — behaviour that does not look like a cron
 //
-//   npm run test:human   (9 tests)
+//   npm run test:human   (13 tests)
 //
 // A ternos (and every other server) notices regularity: one action
 // every 45s, forever, is not something a person does. These tests
@@ -132,6 +132,70 @@ test("9. the modules that move and defend the bot are in the file", () => {
   for (const name of ["setupMovement", "setupPosition", "setupCombat", "setupBeds", "setupLeaveRejoinModule", "setupAutoAuth", "setupChatMessages", "setupAntiAfk", "setupChatResponder"]) {
     assert.ok(new RegExp(`function ${name}\\s*\\(`).test(source), `${name} is missing from index.js`);
   }
+});
+
+test("10. the first action after a join comes within 5-15s, not 90s", () => {
+  const first = Array.from({ length: 200 }, () => index.firstAntiAfkDelayMs());
+  assert.ok(Math.min(...first) >= 5000, `too early: ${Math.min(...first)}`);
+  assert.ok(Math.max(...first) <= 15000, `too late: ${Math.max(...first)}`);
+  // and it must hand over to the slower beat afterwards
+  assert.ok(index.nextAntiAfkDelayMs(() => 0) >= 20000);
+  const fs = require("fs");
+  const path = require("path");
+  const source = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+  const antiAfk = source.slice(source.indexOf("function setupAntiAfk"), source.indexOf("function setupHumanSchedule"));
+  assert.ok(/firstAntiAfkDelayMs\(\)/.test(antiAfk), "the first delay must be the short one");
+});
+
+test("11. a panel that pins Etc/UTC does not defeat settings.json", () => {
+  const { execFileSync } = require("child_process");
+  const path = require("path");
+  const run = (tz) =>
+    execFileSync(process.execPath, ["-e", "require('./index.js'); console.log(process.env.TZ);"], {
+      cwd: path.join(__dirname, ".."),
+      env: { ...process.env, TZ: tz },
+      encoding: "utf8",
+    }).trim();
+  assert.equal(run("Etc/UTC"), "Asia/Kolkata", "the panel's generic UTC loses");
+  assert.equal(run("UTC"), "Asia/Kolkata");
+  assert.equal(run("America/New_York"), "America/New_York", "a real choice from the panel wins");
+});
+
+test("12. lite mode skips the modules that cost CPU and quiets the actions", () => {
+  const saved = JSON.parse(JSON.stringify(index.config.performance || {}));
+  try {
+    index.config.performance = { enabled: true, physics: false, "view-distance": "tiny", "quiet-actions": true };
+    const perf = index.performanceConfig();
+    assert.equal(perf.enabled, true);
+    assert.equal(perf.physics, false);
+    assert.equal(perf.viewDistance, "tiny");
+    assert.deepEqual(index.disabledModulesFor(perf), ["movement", "position", "combat", "beds"]);
+
+    // an unknown view distance falls back to the cheapest one
+    index.config.performance = { enabled: true, "view-distance": "enormous" };
+    assert.equal(index.performanceConfig().viewDistance, "tiny");
+
+    // off means the old behaviour, nothing skipped
+    index.config.performance = { enabled: false };
+    assert.deepEqual(index.disabledModulesFor(), []);
+  } finally {
+    index.config.performance = saved;
+  }
+});
+
+test("13. lite mode actions land every 60-150s, still jittered", () => {
+  const gaps = Array.from({ length: 300 }, () => index.nextLightAntiAfkDelayMs());
+  assert.ok(Math.min(...gaps) >= 60000, `too frequent: ${Math.min(...gaps)}`);
+  assert.ok(Math.max(...gaps) <= 150000, `too sparse: ${Math.max(...gaps)}`);
+  assert.ok(new Set(gaps).size > 50, "gaps are too regular");
+
+  // the source must actually wire the light beat in
+  const fs = require("fs");
+  const path = require("path");
+  const source = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+  const antiAfk = source.slice(source.indexOf("function setupAntiAfk"), source.indexOf("function setupHumanSchedule"));
+  assert.ok(/nextLightAntiAfkDelayMs/.test(antiAfk), "lite mode is not wired into anti-AFK");
+  assert.ok(/action === "jump" \|\| action === "sneak"/.test(antiAfk), "body-moving actions must be filtered");
 });
 
 run("human");
