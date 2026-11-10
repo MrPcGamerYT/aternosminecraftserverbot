@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-chat.js — chat that reads like a person, not a cron
 //
-//   npm run test:chat   (11 tests)
+//   npm run test:chat   (13 tests)
 //
 // A fixed 120s timer sending the same list in the same order is the
 // clearest "this is a bot" signature a server can see. These tests pin
@@ -157,6 +157,57 @@ test("11. /chat reports and flips the same switch the dashboard uses", () => {
     assert.equal(index.chatState().enabled, before);
   } finally {
     index.setChatEnabled(was);
+  }
+});
+
+test("12. a server that wants /login is reported, not lied about", () => {
+  const sent = [];
+  const saved = {
+    bot: index.runtime.bot,
+    intent: index.runtime.intent,
+    auth: index.runtime.authPending,
+  };
+  index.runtime.bot = { username: "u", entity: {}, chat: (message) => sent.push(message) };
+  index.runtime.intent = "running";
+  try {
+    index.noteAuthPrompt("Please login with /login <password>");
+    assert.equal(index.runtime.authPending, true);
+
+    const result = index.sendConsoleCommand("hello");
+    assert.equal(result.ok, false, "must not claim success");
+    assert.ok(/\/login/.test(result.msg), result.msg);
+    assert.ok(/auto-auth/.test(result.msg), "it should say how to fix it permanently");
+    assert.deepEqual(sent, [], "nothing may go out while the server is dropping chat");
+
+    index.noteAuthPrompt("You are now logged in!");
+    assert.equal(index.runtime.authPending, false);
+    assert.equal(index.sendConsoleCommand("hello").ok, true);
+    assert.deepEqual(sent, ["hello"]);
+
+    // register prompts count too
+    assert.equal(index.noteAuthPrompt("/register <password> <password>"), undefined);
+    assert.equal(index.runtime.authPending, true);
+  } finally {
+    index.runtime.bot = saved.bot;
+    index.runtime.intent = saved.intent;
+    index.runtime.authPending = saved.auth;
+  }
+});
+
+test("13. /login still goes through while the server waits", () => {
+  const sent = [];
+  const saved = { bot: index.runtime.bot, intent: index.runtime.intent, auth: index.runtime.authPending };
+  index.runtime.bot = { username: "u", entity: {}, chat: (message) => sent.push(message) };
+  index.runtime.intent = "running";
+  index.runtime.authPending = true;
+  try {
+    assert.equal(index.sendConsoleCommand("/login ZLAG").ok, true);
+    assert.equal(index.sendConsoleCommand("/register ZLAG ZLAG").ok, true);
+    assert.deepEqual(sent, ["/login ZLAG", "/register ZLAG ZLAG"]);
+  } finally {
+    index.runtime.bot = saved.bot;
+    index.runtime.intent = saved.intent;
+    index.runtime.authPending = saved.auth;
   }
 });
 

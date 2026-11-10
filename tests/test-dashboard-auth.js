@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-dashboard-auth.js — optional password on the dashboard
 //
-//   npm run test:dashboard-auth   (9 tests)
+//   npm run test:dashboard-auth   (11 tests)
 //
 // A panel host publishes the assigned port on the plain internet,
 // so the dashboard is one URL away from anyone: Stop, logs, and
@@ -14,7 +14,8 @@
 
 const { test, run, assert } = require("./harness");
 
-const { dashboardAuth, dashboardPathGuard } = require("../index.js");
+const index = require("../index.js");
+const { dashboardAuth, dashboardPathGuard } = index;
 
 /** Minimal express req/res doubles. */
 function fakeReq(path, authorization) {
@@ -157,6 +158,62 @@ test("9. no path configured means no guard, and slashes are normalised", () => {
   assert.equal(call(guard, right).passed, true);
   assert.equal(right.url, "/");
   assert.equal(call(guard, { path: "/deep", url: "/deep" }).res.statusCode, 404);
+});
+
+test("10. every URL on a page follows the dashboard to its secret path", () => {
+  assert.equal(index.dashboardBase({}), "", "at the root nothing is prefixed");
+  assert.equal(index.dashboardBase({ DASHBOARD_PATH: "my-bot-7f3a" }), "/my-bot-7f3a");
+  assert.equal(index.dashboardBase({ DASHBOARD_PATH: "/deep/link/" }), "/deep/link");
+  assert.equal(index.dashboardBase({ DASHBOARD_PATH: "  " }), "");
+
+  const page = index.withDashboardBase(
+    '<a href="/logs">logs</a><script>var BASE = "__BASE__";</script>',
+    "/secret4",
+  );
+  assert.ok(page.includes('href="/secret4/logs"'), page);
+  assert.ok(page.includes('var BASE = "/secret4"'), page);
+  assert.ok(!page.includes("__BASE__"), "the placeholder must never reach the browser");
+
+  const plain = '<a href="/logs">logs</a><script>var BASE = "__BASE__";</script>';
+  assert.equal(index.withDashboardBase(plain, ""), '<a href="/logs">logs</a><script>var BASE = "";</script>');
+});
+
+test("11. the page under the secret path talks to the secret path, not to /command", async () => {
+  // The bug behind "the dashboard chat does nothing": the page was served at
+  // /<path> but posted to /command, which the path guard 404s.
+  const saved = JSON.parse(JSON.stringify(index.config.dashboard || {}));
+  index.config.dashboard = Object.assign({}, saved, { path: "secret4", password: "" });
+  const app = index.createApp({ proxy: { proxy: false } });
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const page = await index.httpJsonRequest({ url: `${base}/secret4`, method: "GET" });
+    assert.equal(page.statusCode, 200);
+    const html = page.text || "";
+    assert.ok(html.includes('var BASE = "/secret4"'), "the page does not know its own prefix");
+    assert.ok(html.includes('href="/secret4/logs"'), "internal links still point at the root");
+    assert.ok(!/href="\/logs"/.test(html), "an unprefixed link would 404");
+
+    const posted = await index.httpJsonRequest({
+      url: `${base}/secret4/command`,
+      method: "POST",
+      body: { command: "hello" },
+    });
+    assert.equal(posted.statusCode, 200, "the chat box must reach the API");
+    assert.equal(typeof posted.body.msg, "string");
+
+    const bare = await index.httpJsonRequest({ url: `${base}/command`, method: "POST", body: { command: "hello" } });
+    assert.equal(bare.statusCode, 404, "the old, unprefixed URL stays guarded");
+
+    const logs = await index.httpJsonRequest({ url: `${base}/secret4/logs.json?lines=5`, method: "GET" });
+    assert.equal(logs.statusCode, 200);
+    assert.ok(Array.isArray(logs.body.lines), "the log tail must be a list");
+  } finally {
+    index.config.dashboard = saved;
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 run("dashboard auth");

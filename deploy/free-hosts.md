@@ -994,6 +994,42 @@ Boot line to look for:
 A stationary bot with a tiny view distance is close to the cheapest client a
 server can hold — and that is exactly what an "AFK" session should cost.
 
+## 18. Cheap *and* human
+
+Aternos punishes two opposite things: a client that works the server hard, and a
+client that behaves like a statue. The way through both is to make every action
+cost one packet.
+
+| Reads as a bot | Reads as a person | Cost |
+| --- | --- | --- |
+| never moves, never turns | head turns every minute or two | 1 rotation packet |
+| walks a perfect 12 m circle | a 250-850 ms half-step, then stop | ~10 position packets |
+| one action on a timer | bursts of 1-4 actions, then 1-2 min of nothing | 0 |
+| ignores the room | looks at whoever chats or joins | 1 rotation packet |
+| same view distance as a client | `view-distance: "tiny"` | **fewer chunks sent to us** |
+
+```json
+"performance": { "enabled": true, "physics": true, "view-distance": "tiny",
+                 "quiet-actions": true, "looks-human": true }
+```
+
+Boot lines:
+
+```
+[Perf] Lite mode: view distance tiny, actions every 60-150s
+[Perf] Skipping movement, position, combat, beds to keep CPU low
+[Perf] Lite activity: bursts of look/step/swing, reactions to chat and joins
+```
+
+The 2.5 m drift limit is the load-bearing detail: inside it, the client is
+walking over chunks it already has, so the server sends nothing new. Beyond it
+you are back to chunk loading, which is what got the server stopped.
+
+Behaviour alone does not make an AFK bot allowed on Aternos — it never does.
+What it buys is the absence of the two clearest tells (perfect stillness, perfect
+regularity). The remaining tell is the session length, and the settings for that
+are `utils.leave-rejoin` and `utils.human-mode.quiet-hours`.
+
 ## What not to do on the next host
 
 * **Do not deploy this on another PaaS free tier with the self-ping on.** Render,

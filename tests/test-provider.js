@@ -425,17 +425,26 @@ test("21. the provider is wired into the HTTP endpoints without leaking the toke
   });
   const base = `http://127.0.0.1:${server.address().port}`;
 
+  // A settings.json with a dashboard path/password locks every endpoint, which
+  // is the point of it. Reach the API the way a browser would: secret path plus
+  // basic auth taken from whatever this checkout is configured with.
+  const dash = index.resolveDashboard();
+  const prefix = dash.path ? `/${String(dash.path).replace(/^\/+|\/+$/g, "")}` : "";
+  const headers = dash.password
+    ? { authorization: `Basic ${Buffer.from(`${dash.user}:${dash.password}`).toString("base64")}` }
+    : {};
+
   try {
-    const check = await index.httpJsonRequest({ url: `${base}/server/check`, method: "GET" });
+    const check = await index.httpJsonRequest({ url: `${base}${prefix}/server/check`, method: "GET", headers });
     assert.equal(check.ok, true);
     assert.match(JSON.stringify(check.body), /AbCd1234/);
     assert.ok(!JSON.stringify(check.body).includes(TOKEN), "the token must never reach a client");
 
-    const status = await index.httpJsonRequest({ url: `${base}/server/status`, method: "GET" });
+    const status = await index.httpJsonRequest({ url: `${base}${prefix}/server/status`, method: "GET", headers });
     assert.equal(status.ok, true);
     assert.ok(!JSON.stringify(status.body).includes(TOKEN));
 
-    const started = await index.httpJsonRequest({ url: `${base}/server/start`, method: "POST" });
+    const started = await index.httpJsonRequest({ url: `${base}${prefix}/server/start`, method: "POST", headers });
     assert.equal(started.statusCode, 200);
     assert.equal(started.body.ok, true);
     assert.ok(!JSON.stringify(started.body).includes(TOKEN));
