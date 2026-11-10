@@ -764,6 +764,179 @@ set it back).
 | One account, one server | a second account after a suspension is ban evasion |
 | Keep `--max-old-space-size` set | OOM kills look like random disconnects |
 
+## 14. Which host actually allows this bot *and* a dashboard
+
+Three suspensions is a pattern: free panels sell "bots" and mean Discord bots.
+The bot part is easy; the part that gets you suspended or port-blocked is an
+always-on Minecraft client plus a public HTTP port on a free plan.
+
+| Host | Bot allowed by AUP? | Public dashboard | Free? | Card? | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| **Oracle Cloud Always Free** | yes — it is your VM, no AUP about clients | yes, real IP + port, HTTPS with Caddy | forever | yes (₹0 charged) | **the answer** |
+| **alwaysdata** | personal use, no explicit ban | yes, **HTTPS** on `you.alwaysdata.net` | yes | no | best no-card option |
+| **Paid VPS** (VisiHost ₹99, Hetzner €3.79, RackNerd ~$11/yr) | yes | yes | no | yes | zero drama |
+| SillyDev | explicitly yes | yes | yes | no | **suspended 3×** — stop |
+| Lunafy | Discord-bot host | **no port on free** | yes | no | bot only |
+| Botkeep / Waifly / HeavenCloud / Daki | unclear, "bot hosting" | yes | yes | no | same risk as SillyDev |
+
+The rule that matters: **if the host's product is "bot hosting", a Minecraft AFK
+client is a grey area they can suspend at will. If the host's product is a
+server, there is no rule to break.**
+
+### No card at all — what is actually creatable today
+
+Checked on the providers' own pages on **9 November 2026**. "Free" and "free right
+now" are different things: several panels advertise a free tier and then have no
+capacity to give you one.
+
+| Host | Free offer as published today | Card | Renewal / catch | Port for the dashboard |
+| --- | --- | --- | --- | --- |
+| **alwaysdata** | "0€/month … available for life", 1 GB SSD, 256 MB RAM, ¼ CPU | **no** | none; personal use only | **yes — HTTPS on `you.alwaysdata.net`** |
+| **Botkeep** | "One free server, 24/7", 512 MB, 50% CPU, 1 GB | **no** | no renewal timer, but "deployment is subject to available capacity" | domains tab with HTTPS aliases; port not guaranteed |
+| **Daki** (`daki.cc`) | "€0 forever", 512 MB, 1 GB disk, 50% CPU | **no** | runtime extended by **watching ads** | yes (Pterodactyl Network tab) |
+| **HeavenCloud** | 512 MB, 712 MB disk, 25% CPU | **no** | **renew every 7 days** or suspended | yes |
+| **FreeGameHost** | 256 MB | no | renew every **12 hours** | yes |
+| **Lunafy** | 256 MB free first server | no | renew every 7 days | **no** — ports are paid |
+| **Oracle Cloud** | 4 cores / 24 GB always free | **yes** | capacity lottery | yes |
+| ~~SillyDev~~ | free | no | — | suspended 3× |
+
+So the no-card shortlist that can actually show a dashboard is **alwaysdata**,
+**HeavenCloud** and **Daki** (plus Botkeep if its Domains tab routes to your port).
+
+**alwaysdata** wins on upkeep: nothing to renew, nothing to watch, HTTPS included,
+free for life. Its weakness is size — 256 MB and a quarter of a CPU — so the bot
+runs, but leave `NODE_OPTIONS=--max-old-space-size=192` set.
+
+**HeavenCloud** is the better fit for a long Minecraft session: a real 24/7
+container with a public port, at the cost of one renewal click every 7 days.
+
+### Oracle Always Free, click by click
+
+1. `cloud.oracle.com` → sign up. Card is for identity, nothing is charged, and
+   the free tier never expires.
+2. Home region: **India West (Mumbai)** or **India South (Hyderabad)**.
+3. Menu → **Compute → Instances → Create instance**.
+4. Image **Ubuntu 24.04**, shape **Ampere A1** (4 cores / 24 GB). If it says
+   "out of capacity", try 1 core / 6 GB, another availability domain, or retry
+   tomorrow — capacity comes and goes.
+5. Download the SSH key, create the instance, copy the **public IP**.
+6. `ssh ubuntu@<ip>` → install Node 22 (`curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -` then `sudo apt install -y nodejs git`).
+7. `git clone` your repo (or upload the ZIP), then `npm ci --omit=dev`.
+8. `sudo bash deploy/vm-install.sh` — installs the systemd unit so the bot
+   restarts on reboot and on crashes.
+9. Open the dashboard port: **Networking → Virtual Cloud Networks → your VCN →
+   Security Lists → Default → Add Ingress Rule** — source `0.0.0.0/0`, TCP,
+   destination port `6005`.
+10. `http://<ip>:6005/<DASHBOARD_PATH>` is your dashboard. HTTPS later with
+    Caddy or Cloudflare (section 3).
+
+No renewal, no sleep, no AUP about automation — because nobody is hosting your
+bot, you are.
+
+## 15. The ones that are actually open (checked 9 Nov 2026)
+
+Several hosts on the older lists are dead, card-gated or out of free capacity.
+These are the ones whose own pages still advertise a free plan **without a card**
+today, with what each one gives a Minecraft bot that also wants a dashboard.
+
+| Host | Free offer, in their words | Card | What keeps it online | Public port |
+| --- | --- | --- | --- | --- |
+| **Wispbyte** (`wispbyte.com`) | "512 MB RAM and 1 GB disk for €0. No card, no coins and **no renew button**" | no | log in once every **14 days** | **yes** — "you get a public port so people can reach it" |
+| **NexCloud** (`nexcloud.in`) | "256 MB DDR4, 512 MB NVMe, 50% CPU … **no credit card**" | no | claimed through their Discord role, then 24/7, no sleep | yes (Pterodactyl Network tab) |
+| **KataHost** (`katahost.org`) | "100% free Discord bot hosting … no credit card" | no | panel | yes (Pterodactyl) |
+| **Katabump** | 308 MB RAM, 716 MB NVMe, 25% CPU | not stated | renew every **4 days** | yes |
+| **bot-hosting.net** | 256 MB, 512 MB storage | no | renew every **4 days** | yes |
+| **fps.ms** | 128 MB | no | renew every **24 hours** | yes |
+| **FreeGameHost.xyz** | 256 MB, 500 MB storage | no | renew every **12 hours** (up to 48 h) | yes |
+| **Pella** | 100 MB | no | ads | yes, but too small for mineflayer |
+
+### "Discord bot hosting" is a label, not a technical limit
+
+Nothing in this repo is Discord-specific: `discord.enabled` is `false` by
+default and the webhook is optional. On the server side a panel only runs
+`npm start` and watches the process. It never inspects what the socket talks to,
+so a "Discord bot" panel runs a Minecraft client exactly like any other Node.js
+process — as long as outbound TCP to the Minecraft port is allowed (it is, on
+every host below) and the terms do not restrict the use.
+
+What actually differs:
+
+| Kind of host | Examples | Runs the bot? | What to check |
+| --- | --- | --- | --- |
+| **Generic Node.js host** | alwaysdata, Wispbyte, Botkeep, Daki | yes | does it give you a public port |
+| **Game/app panel** | SillyDev, HeavenCloud, Waifly | yes | AUP wording about automation |
+| **Discord-only focus** | NexCloud, Pella, Katabump, fps.ms, Lunafy, bot-hosting.net | yes, technically | their terms are written around Discord bots; a Minecraft client can be judged out of scope |
+
+If the terms matter to you, pick from the first two rows. Wispbyte lists
+Minecraft servers and web apps among the things it hosts; alwaysdata is a plain
+web host that never mentions Discord at all.
+
+**Wispbyte is the closest thing to what you asked for**: 512 MB, no card, no
+renewal clicking, a public port for the dashboard, and it hosts real Minecraft
+servers, so an AFK client is unlikely to be the thing that gets you suspended.
+Two things to know: free servers run in Romania, and their panel moved from
+Pterodactyl to their own client panel on 31 October 2026, so screenshots from
+older guides no longer match.
+
+### Wispbyte, start to finish (their KB, 9 Nov 2026)
+
+1. `wispbyte.com/client/register` → sign up (no card) → verify the email.
+   **One person, one free account** — a second account is a stated violation.
+2. **Create Server** → server name + description → select the **Free Plan**.
+3. **Docker image: pick `Node.js`.** *No database.* The database images
+   (MariaDB, PostgreSQL, Redis, MongoDB) exist for projects that need one; this
+   bot keeps its state in `settings.json` and a lease file in `/tmp`, so a
+   database would only waste part of the 512 MB.
+4. **Files** → upload the ZIP → extract so `index.js` sits next to
+   `package.json` at the top level. (SFTP is a premium feature; use the file
+   manager's upload + extract.)
+5. **Startup** → startup command `npm start`, and add environment variables:
+   `DASHBOARD_PATH=my-bot-7f3a`, `TZ=Asia/Kolkata`,
+   `NODE_OPTIONS=--max-old-space-size=384`. If it offers a "main startup file"
+   picker, choose `index.js`.
+6. **Console** → `npm ci --omit=dev` if dependencies are not installed yet, then
+   **Start**. Watch for `[Modules] Ready (7 interval(s) armed)`.
+7. The panel shows the public address/port — the dashboard is
+   `http://<address>/my-bot-7f3a`. If the log says the dashboard listens on 5000
+   but your allocation is 10108, pin it in `settings.json`:
+   `"dashboard": { "port": 10108 }` (the panel's `PORT`/`SERVER_PORT` still wins).
+
+**Pick a Node 22 image.** Their default Node image was 19.9.0 in November 2026, and
+`mineflayer@4.39` declares `engines.node >= 22` — the console shows
+`npm WARN EBADENGINE … current: node v19.9.0`. It may install anyway, but a
+Minecraft client on an unsupported Node is the wrong place to save ten minutes.
+
+Their node egg runs `node /home/container/main/${JS_FILE}`, so the project has to
+live in **`main/`** with `JS_FILE=index.js` — the ZIP's top level goes there, not
+into `/home/container`.
+8. Log in to the client panel at least once every **2 weeks** or the server is
+   stopped; after 30 days of no login the files are moved to storage (not
+   deleted) and can be restored from the server page.
+
+Ask in their Discord, once, whether a Minecraft AFK client is welcome. One
+sentence now beats a suspension later.
+
+### If every panel is full: run it at home, free, no card
+
+A laptop, an old PC or a phone with Termux is a host with no queue, no capacity
+limit and nobody's AUP to break. The dashboard gets a public HTTPS URL through a
+free Cloudflare quick tunnel — no account, no card.
+
+```bash
+# on the machine
+cd aternosminecraftserverbot
+npm ci --omit=dev
+PORT=5000 npm start
+
+# in a second terminal: a free https URL that works while the command runs
+cloudflared tunnel --url http://localhost:5000
+#  -> https://something-random.trycloudflare.com
+```
+
+`deploy/termux-install.sh` covers the Android case, `deploy/vm-install.sh` the
+systemd case on a Linux box. The catch is honest: the machine must stay on, and
+power or internet cuts take the bot down with them.
+
 ## What not to do on the next host
 
 * **Do not deploy this on another PaaS free tier with the self-ping on.** Render,

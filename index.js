@@ -19,6 +19,19 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+
+// Time zone first, before anything can format a date: Node reads process.env.TZ
+// once and caches it, so setting it after the first Date is too late. Hosts
+// without a Variables tab get their zone from settings.json.
+if (!process.env.TZ) {
+  try {
+    const rawSettings = JSON.parse(fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"));
+    const wantedZone = String(rawSettings.timezone || "").trim();
+    if (wantedZone) process.env.TZ = wantedZone;
+  } catch (_err) {
+    /* no settings.json yet, or it is being edited — the default zone is fine */
+  }
+}
 const http = require("http");
 const crypto = require("crypto");
 const https = require("https");
@@ -3617,6 +3630,9 @@ function resolveHttpPort(source = env) {
   if (Number.isFinite(explicit) && explicit > 0) return explicit;
   const panel = Number(source.SERVER_PORT);
   if (Number.isFinite(panel) && panel > 0) return panel;
+  // Hosts without a Variables tab can pin the port in settings.json instead.
+  const fromSettings = Number((config.dashboard && config.dashboard.port) || config.port);
+  if (Number.isFinite(fromSettings) && fromSettings > 0) return fromSettings;
   return 5000;
 }
 

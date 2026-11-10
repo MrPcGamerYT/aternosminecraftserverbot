@@ -3,7 +3,8 @@
   "dashboard": {
     "path": "",
     "password": "",
-    "user": "admin"
+    "user": "admin",
+    "port": 0
   },
   "timezone": "Asia/Kolkata",
   "bot-account": {
