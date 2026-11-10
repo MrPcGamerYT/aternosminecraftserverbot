@@ -85,4 +85,30 @@ function delay(ms) {
   });
 }
 
-module.exports = { test, run, assert, delay };
+
+/**
+ * Dashboard protection (secret path + password) comes from settings.json, which
+ * on a real deployment has both. Suites that exercise routing should not depend
+ * on whatever secrets the person running them happens to have in there: clear
+ * the block for the duration of one createApp() call, then put it back.
+ */
+function openDashboard() {
+  const index = require("../index.js");
+  const saved = JSON.parse(JSON.stringify((index.config && index.config.dashboard) || {}));
+  index.config.dashboard = Object.assign({}, saved, { path: "", password: "" });
+  return () => {
+    index.config.dashboard = saved;
+  };
+}
+
+/** The same clearing, applied around one synchronous createApp() call. */
+function buildApp(index, options) {
+  const restore = openDashboard();
+  try {
+    return index.createApp(options);
+  } finally {
+    restore();
+  }
+}
+
+module.exports = { test, run, assert, delay, openDashboard, buildApp };

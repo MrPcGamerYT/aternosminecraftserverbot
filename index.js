@@ -119,6 +119,7 @@ const DEFAULT_CONFIG = {
     physics: true,
     "view-distance": "tiny",
     "quiet-actions": true,
+    "looks-human": true,
   },
   movement: {
     enabled: true,
@@ -911,6 +912,9 @@ const runtime = {
   policyCategory: null,
 
   forcedLogin: false,
+  // true while the server is telling us to /login: it silently drops chat from a
+  // player who has not authenticated, which is why dashboard chat "does nothing".
+  authPending: false,
   lastProbe: null,
   lastProbeAt: 0,
   lastError: null,
@@ -1686,6 +1690,7 @@ function wireBotEvents(bot) {
     runtime.notReadyProbes = 0;
     runtime.lastDisconnectReason = null;
     runtime.lastError = null;
+    runtime.authPending = false;
     setPhase("connected", `Playing on ${serverTarget.label}`);
     addLog(`[Bot] Spawned in ${serverTarget.label} (version ${bot.version || "?"})`);
     if (watchdog) watchdog.noteSpawn();
@@ -1781,8 +1786,34 @@ function wireBotEvents(bot) {
 
   bot.on("messagestr", (message) => {
     if (watchdog) watchdog.noteData();
+    noteAuthPrompt(message);
     if (config.utils["chat-log"] !== false) addLog(`[Chat] ${String(message).slice(0, 300)}`);
   });
+}
+
+const AUTH_PROMPT_RE =
+  /(\/login|\/register|please\s+(log\s?in|register)|you\s+(are not|must)\s+log|not logged in|login to (play|continue)|register to (play|continue))/i;
+const AUTH_DONE_RE =
+  /(successfully (logged in|registered)|you are now logged in|now logged in|login successful|registered successfully)/i;
+
+/**
+ * Track whether the server is waiting for /login or /register.
+ *
+ * Auth plugins do not reject chat politely — they throw it away. A dashboard
+ * message then reports "Sent" and nothing ever appears in game, which reads as
+ * "the chat box is broken". Knowing the state lets us say the real reason.
+ */
+function noteAuthPrompt(message) {
+  const text = String(message || "");
+  if (!text) return;
+  if (AUTH_PROMPT_RE.test(text)) {
+    if (!runtime.authPending) {
+      addLog("[Auth] Server is asking for /login — chat is dropped until the bot authenticates");
+    }
+    runtime.authPending = true;
+    return;
+  }
+  if (AUTH_DONE_RE.test(text)) runtime.authPending = false;
 }
 
 /** Policy block + kick bookkeeping. `end` still owns the reconnect call. */
@@ -2031,6 +2062,7 @@ function performanceConfig() {
     // mineflayer speaks these names; anything unknown falls back to tiny.
     viewDistance: ["tiny", "short", "normal", "far"].includes(distance) ? distance : "tiny",
     quietActions: perf["quiet-actions"] !== false,
+    looksHuman: perf["looks-human"] !== false,
   };
 }
 
@@ -2038,6 +2070,62 @@ function performanceConfig() {
 function disabledModulesFor(perf = performanceConfig()) {
   if (!perf.enabled) return [];
   return ["movement", "position", "combat", "beds"];
+}
+
+/**
+ * The actions lite mode is allowed to take, and how often.
+ *
+ * Every entry costs one packet or a few hundred milliseconds of walking inside
+ * the chunk we already got: no pathfinding, no entity scans, no chunk loads.
+ * The mix is what a person at a keyboard looks like — mostly head turns, the
+ * odd half-step, a swing, a hotbar click.
+ */
+const HUMAN_ACTION_WEIGHTS = Object.freeze([
+  ["look", 0.5],
+  ["micro-step", 0.17],
+  ["swing", 0.14],
+  ["hotbar", 0.09],
+  ["jump", 0.06],
+  ["idle", 0.04],
+]);
+
+function pickHumanAction(random = Math.random) {
+  const r = Number(random());
+  let acc = 0;
+  for (const [name, weight] of HUMAN_ACTION_WEIGHTS) {
+    acc += weight;
+    if (r < acc) return name;
+  }
+  return "look";
+}
+
+/** How long a single key tap lasts: long enough to register, short enough to stay put. */
+function microStepMs(random = Math.random) {
+  return pickRandomInt(250, 850, random);
+}
+
+/** Actions in a row before a rest. Hands move in bursts, not on a timer. */
+function humanBurstSize(random = Math.random) {
+  return pickRandomInt(1, 4, random);
+}
+
+/** Gap inside a burst. */
+function humanBurstGapMs(random = Math.random) {
+  return pickRandomInt(1200, 5500, random);
+}
+
+/** Walking further than this from where we logged in starts loading new chunks. */
+const MICRO_STEP_DRIFT_LIMIT = 2.5;
+
+/**
+ * A micro-step is only cheap while it stays in the chunk we already have, and
+ * it does nothing at all when the client is not simulating physics.
+ */
+function shouldMicroStep(distanceFromAnchor, physicsEnabled = true) {
+  if (!physicsEnabled) return false;
+  const d = Number(distanceFromAnchor);
+  if (!Number.isFinite(d)) return true; // no anchor yet: one step is harmless
+  return d <= MICRO_STEP_DRIFT_LIMIT;
 }
 
 /**
@@ -2276,6 +2364,14 @@ function setupAntiAfk(bot) {
   const antiAfk = (config.utils && config.utils["anti-afk"]) || {};
   if (!antiAfk.enabled) return;
 
+  // Lite mode has its own, cheaper idea of "alive": stand still and twitch like
+  // a person, instead of walking a circle. See setupLiteHumanActivity().
+  const lite = performanceConfig();
+  if (lite.enabled && lite.looksHuman) {
+    setupLiteHumanActivity(bot);
+    return;
+  }
+
   // One jittered loop instead of three metronomes. Every tick decides whether
   // it is time for something, and what.
   const perf = performanceConfig();
@@ -2334,6 +2430,154 @@ function setupAntiAfk(bot) {
     }
     if (watchdog) watchdog.noteMovement();
   }, 10000).unref?.();
+}
+
+// ---------------------------------------------------------------------------
+//  Lite human activity
+//
+//  The Aternos problem in one line: standing perfectly still is cheap but reads
+//  as a bot, and walking a circle reads as a player but costs CPU. The middle
+//  ground is *cheap bits of person* — a head turn, a half-step inside the
+//  loaded chunk, a swing, a hotbar click — triggered in bursts, plus looking at
+//  whoever just spoke or walked in. All of it is a handful of packets.
+// ---------------------------------------------------------------------------
+
+/** Look at a player's head, if they are loaded and still here. */
+function lookAtPlayer(bot, username, delayMs) {
+  const timer = setTimeout(() => {
+    try {
+      const player = bot.players && bot.players[username];
+      const target = player && player.entity;
+      if (!target || !target.position) return;
+      if (typeof bot.lookAt !== "function") return;
+      if (bot.entity && bot.entity.position && bot.entity.position.distanceTo(target.position) > 48) return;
+      bot.lookAt(target.position.offset(0, 1.6, 0), true).catch(() => {});
+    } catch (_err) {
+      /* ignore */
+    }
+  }, Math.max(0, Number(delayMs) || 0));
+  if (timer.unref) timer.unref();
+  return timer;
+}
+
+function setupLiteHumanActivity(bot) {
+  const physicsOn = () => bot.physicsEnabled !== false;
+  let anchor = null;
+  let burstRemaining = 0;
+  let nextAt = Date.now() + firstAntiAfkDelayMs();
+
+  const rememberAnchor = () => {
+    if (anchor || !bot.entity || !bot.entity.position) return;
+    try {
+      anchor = bot.entity.position.clone();
+    } catch (_err) {
+      anchor = null;
+    }
+  };
+
+  const drift = () => {
+    if (!anchor || !bot.entity || !bot.entity.position) return 0;
+    try {
+      return bot.entity.position.distanceTo(anchor);
+    } catch (_err) {
+      return 0;
+    }
+  };
+
+  const holdKey = (key, ms) => {
+    if (typeof bot.setControlState !== "function") return;
+    try {
+      bot.setControlState(key, true);
+      const timer = setTimeout(() => {
+        try {
+          bot.setControlState(key, false);
+        } catch (_err) {
+          /* ignore */
+        }
+      }, Math.max(120, ms));
+      if (timer.unref) timer.unref();
+    } catch (_err) {
+      /* ignore */
+    }
+  };
+
+  const act = (action) => {
+    if (action === "look") {
+      // A head turn is one rotation packet; the server does not simulate a thing.
+      const yaw = Math.random() * Math.PI * 2 - Math.PI;
+      const pitch = (Math.random() * Math.PI) / 2 - Math.PI / 4;
+      if (typeof bot.look === "function") bot.look(yaw, pitch, false).catch(() => {});
+    } else if (action === "micro-step") {
+      if (!shouldMicroStep(drift(), physicsOn())) return;
+      const keys = ["forward", "back", "left", "right"];
+      // Drifting too far already? Walk back towards where we logged in.
+      if (drift() > 1.4 && anchor) {
+        try {
+          bot.look(Math.atan2(anchor.z - bot.entity.position.z, anchor.x - bot.entity.position.x) - Math.PI / 2, 0, true);
+        } catch (_err) {
+          /* ignore */
+        }
+        holdKey("forward", microStepMs());
+        return;
+      }
+      holdKey(keys[Math.floor(Math.random() * keys.length)], microStepMs());
+    } else if (action === "swing") {
+      if (typeof bot.swingArm === "function") bot.swingArm("right");
+    } else if (action === "hotbar") {
+      if (typeof bot.setQuickBarSlot === "function") bot.setQuickBarSlot(Math.floor(Math.random() * 9));
+    } else if (action === "jump") {
+      // Rare on purpose — bots are the ones that jump on a metronome.
+      holdKey("jump", 150 + Math.floor(Math.random() * 200));
+    }
+    // "idle" does nothing at all, and that is the point.
+  };
+
+  addBotInterval(() => {
+    if (!runtime.connectedAt) return;
+    if (Date.now() < nextAt) return;
+    rememberAnchor();
+
+    try {
+      act(pickHumanAction());
+    } catch (_err) {
+      /* never let a twitch kill the session */
+    }
+
+    if (burstRemaining > 0) {
+      burstRemaining -= 1;
+      nextAt = Date.now() + humanBurstGapMs();
+    } else if (Math.random() < 0.3) {
+      burstRemaining = humanBurstSize() - 1;
+      nextAt = Date.now() + humanBurstGapMs();
+    } else {
+      nextAt = Date.now() + nextLightAntiAfkDelayMs();
+    }
+    if (watchdog) watchdog.noteMovement();
+  }, 1000).unref?.();
+
+  // Reacting is free and it is the strongest human tell there is: someone says
+  // something, you look at them. Someone joins, you look at the door.
+  try {
+    bot.on("chat", (username) => {
+      if (!username || username === bot.username) return;
+      lookAtPlayer(bot, username, pickRandomInt(800, 2500));
+    });
+    bot.on("playerJoined", (player) => {
+      if (!player || player.username === bot.username) return;
+      lookAtPlayer(bot, player.username, pickRandomInt(1200, 4000));
+    });
+    bot.on("entityHurt", (entity) => {
+      if (!bot.entity || entity !== bot.entity) return;
+      // Took a hit: look around for the source instead of standing there.
+      if (typeof bot.look === "function") {
+        bot.look(Math.random() * Math.PI * 2 - Math.PI, 0, true).catch(() => {});
+      }
+    });
+  } catch (err) {
+    addLog(`[Perf] Reactions unavailable: ${err && err.message ? err.message : "unknown"}`);
+  }
+
+  addLog("[Perf] Lite activity: bursts of look/step/swing, reactions to chat and joins");
 }
 
 // ---------------------------------------------------------------------------
@@ -2753,6 +2997,22 @@ function sendConsoleCommand(command) {
     addLog(`[Console] ${msg}`);
     return { ok: false, msg };
   }
+  if (runtime.connectedAt && !bot.entity) {
+    const msg = "The bot is connected but not spawned yet — wait for 'Spawned' in the log, then send again.";
+    addLog(`[Console] ${msg}`);
+    return { ok: false, msg };
+  }
+
+  // Auth plugins drop chat from a player who has not logged in: saying "Sent"
+  // there is a lie the user cannot see through. Say what the server wants.
+  const isAuthCommand = /^\/(login|register|reg|l)\b/i.test(cmd);
+  if (runtime.authPending && !isAuthCommand) {
+    const msg =
+      "The server is asking the bot to /login first, and it silently drops chat until then. " +
+      "Send `/login <password>` here, or turn on utils.auto-auth so the bot logs in by itself.";
+    addLog(`[Console] ${msg}`);
+    return { ok: false, msg };
+  }
 
   try {
     if (cmd.startsWith("/say ")) {
@@ -2870,6 +3130,29 @@ function renderBanners(state) {
   return banners.join("\n");
 }
 
+/** "" at the root, "/my-bot-7f3a" when the dashboard lives under a secret path. */
+function dashboardBase(env = process.env) {
+  const raw = resolveDashboard(env).path;
+  if (!raw) return "";
+  const trimmed = String(raw).replace(/^\/+/, "").replace(/\/+$/, "");
+  return trimmed ? `/${trimmed}` : "";
+}
+
+/**
+ * Point every internal URL in a page at the dashboard's secret path.
+ *
+ * With DASHBOARD_PATH=my-bot-7f3a the page is served at /my-bot-7f3a and the
+ * path guard 404s /command, /logs and /status/light. The chat box therefore
+ * posted to a URL that does not exist, the click looked like it did nothing,
+ * and the reload 900ms later wiped the error. Rewriting the page is the fix.
+ */
+function withDashboardBase(html, base = dashboardBase()) {
+  const prefix = base || "";
+  return html
+    .replace(/__BASE__/g, prefix)
+    .replace(/href="\/(?!\/)/g, `href="${prefix}/`);
+}
+
 function renderDashboard(state) {
   const players = state.server.players;
   const playersText = players && players.online !== null && players.online !== undefined
@@ -2881,7 +3164,7 @@ function renderDashboard(state) {
 
   const canStart = state.status === "stopped" || state.policy.blocked || !state.connected;
 
-  return `<!DOCTYPE html>
+  return withDashboardBase(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -2975,20 +3258,36 @@ function renderDashboard(state) {
   <footer>minecraft-afk-bot v${escapeHtml(state.version)} · <a href="/logs">full logs</a> · <a href="/tutorial">setup guide</a></footer>
 </main>
 <script>
+var BASE = "__BASE__";
 (function () {
   var result = document.getElementById('result');
+  function say(text, ok) {
+    result.textContent = text;
+    result.style.color = ok === false ? 'var(--bad)' : 'var(--ok)';
+    result.style.whiteSpace = 'pre-wrap';
+  }
   function post(url, body) {
-    result.textContent = 'Working…';
-    return fetch(url, {
+    say('Working…');
+    return fetch(BASE + url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body || {})
     }).then(function (r) { return r.json().catch(function () { return {}; }); })
       .then(function (data) {
-        result.textContent = data.msg || data.error || (data.ok === false ? 'Failed' : 'Done');
-        setTimeout(function () { location.reload(); }, 900);
+        say(data.msg || data.error || (data.ok === false ? 'Failed' : 'Done'), data.ok !== false);
+        // Chat keeps its answer on screen and refreshes the log box instead of
+        // reloading the page out from under you.
+        if (url.indexOf('/command') === 0) { setTimeout(refreshLogs, 300); return; }
+        setTimeout(function () { location.reload(); }, 1200);
       })
-      .catch(function (err) { result.textContent = 'Error: ' + err.message; });
+      .catch(function (err) { say('Error: ' + err.message, false); });
+  }
+  function refreshLogs() {
+    fetch(BASE + '/logs.json?lines=40').then(function (r) { return r.json(); })
+      .then(function (data) {
+        var box = document.getElementById('logs');
+        if (box && data && data.lines) box.textContent = data.lines.join('\n');
+      }).catch(function () {});
   }
   document.querySelectorAll('[data-post]').forEach(function (btn) {
     btn.addEventListener('click', function () {
@@ -3005,11 +3304,11 @@ function renderDashboard(state) {
     if (e.key === 'Enter') document.getElementById('send').click();
   });
   function refresh() {
-    fetch('/status/light').then(function (r) { return r.json(); }).then(function (data) {
+    fetch(BASE + '/status/light').then(function (r) { return r.json(); }).then(function (data) {
       var el = document.getElementById('provider-status');
       if (el && typeof data.players !== 'undefined') { /* noop */ }
     }).catch(function () {});
-    fetch('/server/status?light=1').then(function (r) { return r.json(); }).then(function (data) {
+    fetch(BASE + '/server/status?light=1').then(function (r) { return r.json(); }).then(function (data) {
       var el = document.getElementById('provider-status');
       if (!el) return;
       if (data && data.provider && data.provider.ok && data.provider.server) {
@@ -3027,11 +3326,11 @@ function renderDashboard(state) {
 })();
 </script>
 </body>
-</html>`;
+</html>`);
 }
 
 function renderLogsPage(limit) {
-  return `<!DOCTYPE html>
+  return withDashboardBase(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -3050,6 +3349,7 @@ function renderLogsPage(limit) {
   <footer><a href="/">back to dashboard</a></footer>
 </main>
 <script>
+var BASE = "__BASE__";
 (function () {
   var el = document.getElementById('logs');
   var pinned = true;
@@ -3057,7 +3357,7 @@ function renderLogsPage(limit) {
     pinned = el.scrollTop + el.clientHeight >= el.scrollHeight - 24;
   });
   function tick() {
-    fetch('/logs?format=json&limit=300').then(function (r) { return r.json(); })
+    fetch(BASE + '/logs?format=json&limit=300').then(function (r) { return r.json(); })
       .then(function (data) {
         if (!data || !data.logs) return;
         el.textContent = data.logs.join('\\n');
@@ -3068,11 +3368,11 @@ function renderLogsPage(limit) {
 })();
 </script>
 </body>
-</html>`;
+</html>`);
 }
 
 function renderTutorialPage(state) {
-  return `<!DOCTYPE html>
+  return withDashboardBase(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -3153,12 +3453,12 @@ BOT_MIRROR_URL=https://standby.example.com  # optional cross-machine failover</p
   <footer><a href="/">back to dashboard</a></footer>
 </main>
 </body>
-</html>`;
+</html>`);
 }
 
 function renderLightPage(state) {
   const cls = state.connected ? "on" : state.policyBlocked ? "warn" : "off";
-  return `<!DOCTYPE html>
+  return withDashboardBase(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(config.name || "AFK Bot")} status</title>
@@ -3185,7 +3485,7 @@ body{margin:0;font-family:ui-sans-serif,system-ui,sans-serif;background:#0b0f14;
 <script>
 setTimeout(function () { location.reload(); }, 15000);
 </script>
-</body></html>`;
+</body></html>`);
 }
 
 // ============================================================================
@@ -3350,6 +3650,13 @@ function createApp(options = {}) {
 
   app.get("/", (req, res) => {
     res.type("html").send(renderDashboard(publicState()));
+  });
+
+  // Plain log tail for the dashboard's live refresh after a chat message.
+  app.get("/logs.json", (req, res) => {
+    const wanted = Number(req.query.lines);
+    const lines = Math.min(400, Math.max(1, Number.isFinite(wanted) && wanted > 0 ? Math.trunc(wanted) : 40));
+    res.set("Cache-Control", "no-store").json({ ok: true, lines: getLogText(lines).split("\n") });
   });
 
   app.get("/logs", (req, res) => {
@@ -4092,6 +4399,15 @@ const exported = {
   performanceConfig,
   disabledModulesFor,
   nextLightAntiAfkDelayMs,
+  pickHumanAction,
+  microStepMs,
+  humanBurstSize,
+  humanBurstGapMs,
+  shouldMicroStep,
+  MICRO_STEP_DRIFT_LIMIT,
+  dashboardBase,
+  withDashboardBase,
+  noteAuthPrompt,
   computeBackoff,
   computeDuplicateLoginDelay,
   shouldForceLogin,

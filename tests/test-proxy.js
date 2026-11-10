@@ -10,7 +10,7 @@
 // ============================================================
 
 const http = require("http");
-const { test, run, assert } = require("./harness");
+const { test, run, assert, buildApp } = require("./harness");
 
 const index = require("../index.js");
 
@@ -202,7 +202,7 @@ test("11. proxy mode forwards requests and preserves the status code", async () 
     res.writeHead(201, { "Content-Type": "application/json", "X-Backend": "yes" });
     res.end(JSON.stringify({ ok: true, from: "backend", path: req.url }));
   });
-  const app = index.createApp({ proxy: { proxy: true, backend: backend.url, error: null } });
+  const app = buildApp(index, { proxy: { proxy: true, backend: backend.url, error: null } });
   const local = await listen(app);
 
   try {
@@ -222,7 +222,7 @@ test("12. proxy mode preserves error status codes and bodies", async () => {
     res.writeHead(503, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: false, error: "backend is rebooting" }));
   });
-  const app = index.createApp({ proxy: { proxy: true, backend: backend.url, error: null } });
+  const app = buildApp(index, { proxy: { proxy: true, backend: backend.url, error: null } });
   const local = await listen(app);
 
   try {
@@ -240,7 +240,7 @@ test("13. proxy mode forwards request bodies (POST /command)", async () => {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, echoed: req.method }));
   });
-  const app = index.createApp({ proxy: { proxy: true, backend: backend.url, error: null } });
+  const app = buildApp(index, { proxy: { proxy: true, backend: backend.url, error: null } });
   const local = await listen(app);
 
   try {
@@ -266,7 +266,7 @@ test("14. an unreachable backend returns 502 instead of hanging", async () => {
   const url = backend.url;
   await backend.close();
 
-  const app = index.createApp({ proxy: { proxy: true, backend: url, error: null } });
+  const app = buildApp(index, { proxy: { proxy: true, backend: url, error: null } });
   const local = await listen(app);
   try {
     const result = await index.httpJsonRequest({ url: `${local.base}/`, method: "GET" });
@@ -278,7 +278,7 @@ test("14. an unreachable backend returns 502 instead of hanging", async () => {
 });
 
 test("15. without BOT_BACKEND_URL the app serves its own routes", async () => {
-  const app = index.createApp({ proxy: { proxy: false, backend: null, error: null } });
+  const app = buildApp(index, { proxy: { proxy: false, backend: null, error: null } });
   const local = await listen(app);
   try {
     const ping = await index.httpJsonRequest({ url: `${local.base}/ping`, method: "GET" });
@@ -301,7 +301,7 @@ test("15. without BOT_BACKEND_URL the app serves its own routes", async () => {
 test("16. serverless without a backend flags itself in /health and the dashboard", async () => {
   const savedEnv = { ...process.env };
   delete process.env.BOT_BACKEND_URL;
-  const app = index.createApp({ proxy: { proxy: false, backend: null, error: null } });
+  const app = buildApp(index, { proxy: { proxy: false, backend: null, error: null } });
   const local = await listen(app);
 
   try {

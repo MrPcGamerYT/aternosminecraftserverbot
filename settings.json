@@ -1,17 +1,18 @@
 {
   "name": "FKtheserverhost",
   "dashboard": {
-    "path": "zlagadminbot",
-    "password": "zlagadminbot",
+    "path": "",
+    "password": "",
     "user": "admin",
     "port": 0
   },
   "timezone": "Asia/Kolkata",
   "performance": {
     "enabled": true,
-    "physics": false,
+    "physics": true,
     "view-distance": "tiny",
-    "quiet-actions": true
+    "quiet-actions": true,
+    "looks-human": true
   },
   "bot-account": {
     "username": "OfflinePlayer",
@@ -55,7 +56,7 @@
     },
     "chat-log": true,
     "auto-reconnect": true,
-    "auto-reconnect-delay": 2000,
+    "auto-reconnect-delay": 15000,
     "max-reconnect-delay": 120000,
     "force-login-after-probes": 6,
     "duplicate-login-backoff-min": 120000,
@@ -94,7 +95,7 @@
       "speed": 3000
     },
     "look-around": {
-      "enabled": true,
+      "enabled": false,
       "interval": 5000
     },
     "random-jump": {
@@ -111,7 +112,7 @@
   },
   "combat": {
     "attack-mobs": false,
-    "auto-eat": true
+    "auto-eat": false
   },
   "beds": {
     "pick-up-day": false,

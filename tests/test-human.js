@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-human.js — behaviour that does not look like a cron
 //
-//   npm run test:human   (13 tests)
+//   npm run test:human   (16 tests)
 //
 // A ternos (and every other server) notices regularity: one action
 // every 45s, forever, is not something a person does. These tests
@@ -196,6 +196,53 @@ test("13. lite mode actions land every 60-150s, still jittered", () => {
   const antiAfk = source.slice(source.indexOf("function setupAntiAfk"), source.indexOf("function setupHumanSchedule"));
   assert.ok(/nextLightAntiAfkDelayMs/.test(antiAfk), "lite mode is not wired into anti-AFK");
   assert.ok(/action === "jump" \|\| action === "sneak"/.test(antiAfk), "body-moving actions must be filtered");
+});
+
+test("14. lite activity only ever picks actions that cost a packet or two", () => {
+  const allowed = new Set(["look", "micro-step", "swing", "hotbar", "jump", "idle"]);
+  const seen = new Set();
+  for (let i = 0; i < 3000; i += 1) {
+    const action = index.pickHumanAction();
+    assert.ok(allowed.has(action), `unexpected action: ${action}`);
+    seen.add(action);
+  }
+  assert.equal(seen.size, 6, `not all actions reachable: ${[...seen].join(",")}`);
+
+  // deterministic weights: the head turn dominates, walking is rare
+  assert.equal(index.pickHumanAction(() => 0), "look");
+  assert.equal(index.pickHumanAction(() => 0.99), "idle");
+
+  // the table must not grow a pathfinding entry
+  const source = require("fs").readFileSync(require("path").join(__dirname, "..", "index.js"), "utf8");
+  const table = source.slice(source.indexOf("HUMAN_ACTION_WEIGHTS"), source.indexOf("function pickHumanAction"));
+  assert.ok(!/pathfinder|circle|GoalBlock/.test(table), "lite activity must never pathfind");
+});
+
+test("15. bursts, gaps and key taps stay inside cheap bounds", () => {
+  const bursts = Array.from({ length: 300 }, () => index.humanBurstSize());
+  assert.equal(Math.min(...bursts), 1);
+  assert.equal(Math.max(...bursts), 4);
+
+  const gaps = Array.from({ length: 300 }, () => index.humanBurstGapMs());
+  assert.ok(Math.min(...gaps) >= 1200 && Math.max(...gaps) <= 5500, "burst gap out of range");
+
+  const steps = Array.from({ length: 300 }, () => index.microStepMs());
+  assert.ok(Math.min(...steps) >= 250 && Math.max(...steps) <= 850, "key tap out of range");
+});
+
+test("16. micro-steps stop at the chunk we already loaded", () => {
+  assert.equal(index.shouldMicroStep(0.4, true), true);
+  assert.equal(index.shouldMicroStep(index.MICRO_STEP_DRIFT_LIMIT, true), true);
+  assert.equal(index.shouldMicroStep(index.MICRO_STEP_DRIFT_LIMIT + 0.1, true), false);
+  assert.equal(index.shouldMicroStep(0.4, false), false, "no physics, no walking");
+  assert.equal(index.shouldMicroStep(NaN, true), true, "no anchor yet is harmless");
+
+  // lite mode must hand anti-AFK over to the human script, not the old metronome
+  const source = require("fs").readFileSync(require("path").join(__dirname, "..", "index.js"), "utf8");
+  const antiAfk = source.slice(source.indexOf("function setupAntiAfk"), source.indexOf("function setupLiteHumanActivity"));
+  assert.ok(/setupLiteHumanActivity\(bot\)/.test(antiAfk), "lite mode is not wired into anti-AFK");
+  const lite = source.slice(source.indexOf("function setupLiteHumanActivity"), source.indexOf("function setupHumanSchedule"));
+  assert.ok(/bot\.on\("chat"/.test(lite) && /bot\.on\("playerJoined"/.test(lite), "reactions missing");
 });
 
 run("human");

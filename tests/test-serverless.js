@@ -14,9 +14,22 @@
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
-const { test, run, assert } = require("./harness");
+const { test, run, assert, openDashboard } = require("./harness");
 
 const ROOT = path.join(__dirname, "..");
+
+// settings.json may carry a secret path + password on a real deployment, and the
+// dashboard then 404s everything else — correctly. These tests are about page
+// behaviour, not the owner's secrets.
+function buildApp(mod, options) {
+  const restore = openDashboard();
+  try {
+    return mod.createApp(options);
+  } finally {
+    restore();
+  }
+}
+
 
 /** Serve a handler the way a platform does: app(req, res). */
 function serve(handler) {
@@ -203,7 +216,7 @@ test("9. proxy mode in a function forwards to the always-on bot", async () => {
   await new Promise((resolve) => backend.listen(0, "127.0.0.1", resolve));
 
   const index = require(path.join(ROOT, "index.js"));
-  const app = index.createApp({
+  const app = buildApp(index, {
     proxy: { proxy: true, backend: `http://127.0.0.1:${backend.address().port}`, error: null },
   });
   const local = await serve(index.toPlatformHandler((req, res) => app(req, res)));
@@ -227,7 +240,7 @@ test("10. an unreachable backend in a function is a 502, not a crash", async () 
   await new Promise((resolve) => backend.close(resolve));
 
   const index = require(path.join(ROOT, "index.js"));
-  const app = index.createApp({ proxy: { proxy: true, backend: dead, error: null } });
+  const app = buildApp(index, { proxy: { proxy: true, backend: dead, error: null } });
   const local = await serve(app);
   try {
     const res = await get(local.base + "/");
@@ -240,7 +253,7 @@ test("10. an unreachable backend in a function is a 502, not a crash", async () 
 
 test("11. an invalid BOT_BACKEND_URL is refused, not fatal", async () => {
   const index = require(path.join(ROOT, "index.js"));
-  const app = index.createApp({
+  const app = buildApp(index, {
     proxy: { proxy: false, backend: null, error: "BOT_BACKEND_URL must start with http:// or https://" },
   });
   const local = await serve(app);

@@ -12,7 +12,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 npm install
 npm run doctor     # pre-flight: node version, files, deps, target, port
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 197 tests, no framework, no network
+npm run test:all   # 204 tests, no framework, no network
 ```
 
 ---
@@ -391,40 +391,95 @@ Log on boot:
 
 `npm run doctor` warns when the dashboard is open and neither guard is set.
 
-## Lite mode: when the server complains about CPU
+## Lite mode: cheap *and* human
 
 Aternos stops a whole server for high CPU, and the expensive part is the client:
-pathfinding, jumping, and asking the server for chunks. Lite mode turns those
-off and keeps only the cheap signs of life.
+pathfinding, jumping, and asking the server for chunks. But a bot that stands
+perfectly still is the other problem — it reads as a bot. Lite mode keeps only
+the parts of a person that cost one packet.
 
 ```json
 "performance": {
   "enabled": true,
-  "physics": false,          // no gravity simulation every tick
+  "physics": true,           // needed for the half-steps below
   "view-distance": "tiny",   // ask the server for the fewest chunks it will give
-  "quiet-actions": true      // anti-AFK every 60-150s instead of 20-90s
+  "quiet-actions": true,     // bursts separated by 60-150s rests
+  "looks-human": true        // the twitch script below, plus reactions
 }
 ```
 
-What it changes:
-
 | Before | Lite mode |
 | --- | --- |
-| `movement`, `position`, `combat`, `beds` modules armed (pathfinding, entity scans, block lookups) | **skipped entirely** |
-| client keeps a 12.5 m walk circle and random jumps | no walking, no jumping |
-| an action every 20-90 s, sometimes jump/sneak (entity updates for everyone nearby) | every 60-150 s, and jump/sneak are replaced by look/swing |
-| physics simulated client-side every tick | `bot.physicsEnabled = false` |
-| default view distance | `tiny` |
+| `movement`, `position`, `combat`, `beds` armed (pathfinding, entity scans, block lookups) | **skipped entirely** |
+| 12.5 m walk circle via `pathfinder` + `GoalBlock` | **micro-steps**: a 250-850 ms key tap, only while within 2.5 m of where it logged in |
+| look / swing / hotbar / sneak / jump on one 20-90 s metronome | weighted mix — look 50%, step 17%, swing 14%, hotbar 9%, jump 6%, nothing 4% |
+| one action at a time, evenly spaced | **bursts**: 1-4 actions 1.2-5.5 s apart, then a 60-150 s rest |
+| view distance default (~200 chunks from the server) | `tiny` |
+
+Micro-steps are the trick that makes it cheap *and* alive: walking inside a chunk
+we already have costs a few position packets, and the 2.5 m drift limit means the
+server never has to send a new chunk because of us. Nothing ever calls the
+pathfinder.
+
+What it reacts to — free, and the strongest human tell there is:
+
+| Event | Reaction |
+| --- | --- |
+| someone chats | looks at whoever spoke, 0.8-2.5 s later |
+| someone joins | looks at the door, 1.2-4 s later |
+| the bot takes damage | snaps around to look for the source |
 
 Log on boot:
 
 ```
-[Perf] Lite mode: view distance tiny, physics off, actions every 60-150s
+[Perf] Lite mode: view distance tiny, actions every 60-150s
 [Perf] Skipping movement, position, combat, beds to keep CPU low
+[Perf] Lite activity: bursts of look/step/swing, reactions to chat and joins
 [Modules] Ready (3 interval(s) armed)
 ```
 
-`npm run doctor` reports it as `CPU profile: lite — …`.
+`npm run doctor` reports it as `CPU profile: lite — … human bursts + reactions`.
+
+## Dashboard chat
+
+The box under **Bot** sends Minecraft chat; anything starting with `/` is a
+command. Two things used to make it look broken, and both are fixed:
+
+| Symptom | Cause | Now |
+| --- | --- | --- |
+| typed, pressed Send, nothing happened, page reloaded | the page posted to `/command` while it was served at `/<DASHBOARD_PATH>`, so the path guard answered `404` and the reload wiped the message | every URL on the page is rewritten to the secret path (`var BASE`), and the chat answer stays on screen |
+| "Sent: hello" but nothing appears in game | the server wants `/login` first and silently drops chat from an unauthenticated player | the bot watches for the prompt and answers honestly: *"The server is asking the bot to /login first …"* |
+
+```
+[Auth] Server is asking for /login — chat is dropped until the bot authenticates
+[Console] Sent: hello there
+```
+
+Sending a message also refreshes the **Recent activity** list, so you can see the
+`[Console] Sent: …` line immediately instead of waiting for a page reload.
+`GET /logs.json?lines=40` is the endpoint behind it (and it respects
+`DASHBOARD_PATH` and `DASHBOARD_PASSWORD` like everything else).
+
+### The honest part
+
+This is behaviour jitter, not a disguise. Aternos' rules still prohibit AFK bots
+and their detection is not only looking at the client — it is also "this account
+has been connected for 96 hours straight". The two levers that actually change
+that are in your settings, not in the code:
+
+```json
+"utils": {
+  "leave-rejoin": { "enabled": true, "min-stay-ms": 2700000, "max-stay-ms": 9000000,
+                    "rest-min-ms": 600000, "rest-max-ms": 2400000 },
+  "human-mode": { "enabled": true,
+                  "quiet-hours": { "enabled": true, "start-hour": 1, "end-hour": 8 } }
+}
+```
+
+`leave-rejoin` makes the bot log off for 10-40 minutes after 45-150 minutes online;
+`quiet-hours` makes it genuinely offline at night. Both cost nothing in CPU and
+both look like a person. Neither changes the rule — it makes the pattern less
+obviously automated.
 
 Two more things that cost the server, outside the profile:
 
@@ -610,6 +665,7 @@ so a partial `settings.json` still boots.
 | `MC_USERNAME` / `MC_PASSWORD` | settings | Account credentials. |
 | `DASHBOARD_PATH` | (none) | Serve the dashboard under a secret path instead of the root: `DASHBOARD_PATH=my-bot-7f3a` → `http://host:port/my-bot-7f3a`. No login prompt, nothing to type twice; the root answers plain `404` and scanners see nothing. `/ping`, `/health`, `/mirror/status` stay at the root. |
 | `DASHBOARD_PASSWORD` | (none) | HTTP basic auth for the dashboard. Set it whenever the port is public — a panel host publishes it. `/ping`, `/health` and `/mirror/status` stay open so health checks work. Surrounding whitespace is trimmed. |
+
 | `DASHBOARD_USER` | `admin` | User name for that password. |
 | `PUBLIC_URL` | auto | Keep-alive target. |
 | `SELF_PING_INTERVAL_MS` | `240000` | Keep-alive cadence. |
@@ -621,6 +677,12 @@ so a partial `settings.json` still boots.
 | `EXAROTON_BASE_URL` | `https://api.exaroton.com/v1` | Provider API base. |
 | `LOG_BUFFER_SIZE` | `500` | Log ring-buffer size. |
 | `VERCEL` / `AWS_LAMBDA_FUNCTION_NAME` / `NETLIFY` / `CF_PAGES` | — | Serverless detection. |
+
+> **Keep the dashboard secrets out of `settings.json`.** The repo is public, so
+> `dashboard.path` and `dashboard.password` in the shipped file are empty on
+> purpose. Put your own values in panel variables (`DASHBOARD_PATH`,
+> `DASHBOARD_PASSWORD`) — environment beats `settings.json`, and that keeps the
+> secret out of every future `git diff`.
 
 ---
 
@@ -794,7 +856,7 @@ online is normal.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 15 suites (197 tests)
+npm run test:all          # syntax + all 15 suites (204 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -806,10 +868,10 @@ npm run test:all          # syntax + all 15 suites (197 tests)
 | `test-provider.js` | 21 | Status map 0–10, token exclusivity, base URL scheme, start/stop/restart paths, error surfacing, token scrubbing, endpoint wiring. |
 | `test-proxy.js` | 16 | Vercel/Lambda/Netlify/CF detection, backend URL validation, status/body/header passthrough, 502 on dead backend, serverless banner. |
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
-| `test-chat.js` | 11 |
-| `test-human.js` | 13 | Behaviour that does not look like a cron: anti-AFK gaps are 20–90 s and actually vary, actions are weighted (look/swing dominate), quiet hours handle windows that wrap midnight, breaks are 10–40 min, a source scan fails the build if the old 45 s/60 s fixed timers come back, and every `guard()` in `initializeModules` must name a function that exists — the check that would have caught the release where five modules were armed but undefined; the first anti-AFK action lands 5–15 s after a join instead of up to 90 s; and a panel pinning `Etc/UTC` does not defeat `timezone` in `settings.json` (a real zone from the panel still wins; and lite mode skips movement/position/combat/beds, maps an unknown view distance to `tiny`, and quiets actions to 60–150 s while filtering out jump/sneak. | Chat that reads like a person: every gap is 60–140% of `repeat-delay` with a 5 s floor, the same line never repeats back to back even with a degenerate random source, one-line and empty lists behave, 420 s averages 6–8 minutes; and the console box sends chat, refuses shell commands (`npm install` gets an explanation instead of "not connected") reports stopped vs not-connected correctly; and `/chat off` (or the dashboard button) is a hard stop that clears the timer, not a shorter delay. |
+| `test-chat.js` | 13 |
+| `test-human.js` | 16 | Behaviour that does not look like a cron: anti-AFK gaps are 20–90 s and actually vary, actions are weighted (look/swing dominate), quiet hours handle windows that wrap midnight, breaks are 10–40 min, a source scan fails the build if the old 45 s/60 s fixed timers come back, and every `guard()` in `initializeModules` must name a function that exists — the check that would have caught the release where five modules were armed but undefined; the first anti-AFK action lands 5–15 s after a join instead of up to 90 s; and a panel pinning `Etc/UTC` does not defeat `timezone` in `settings.json` (a real zone from the panel still wins; and lite mode skips movement/position/combat/beds, maps an unknown view distance to `tiny`, and quiets actions to 60–150 s while filtering out jump/sneak. | Chat that reads like a person: every gap is 60–140% of `repeat-delay` with a 5 s floor, the same line never repeats back to back even with a degenerate random source, one-line and empty lists behave, 420 s averages 6–8 minutes; and the console box sends chat, refuses shell commands (`npm install` gets an explanation instead of "not connected") reports stopped vs not-connected correctly; and `/chat off` (or the dashboard button) is a hard stop that clears the timer, not a shorter delay. |
 | `test-envfile.js` | 9 | `.env` parsing (comments, `export`, quotes, junk lines, CRLF), a real panel variable always beats the file, missing/unreadable files are not errors, and the dashboard can be configured from `settings.json` when the host has no Variables tab, including the listen port, with the panel's `PORT`/`SERVER_PORT` still winning; and `timezone` is applied before the first `Date` (Node caches the zone, so a late set does nothing). |
-| `test-dashboard-auth.js` | 9 | Optional dashboard password: off with no env var, 401 + `WWW-Authenticate` without one, accepted with the right user/password, wrong user/password/garbage rejected, `/ping` `/health` `/mirror/status` left open for health checks, tricky passwords (`:`, unicode) still work; a `DASHBOARD_PATH` hides the root with a 404, rewrites the prefixed URL, keeps health at the root, and normalises slashes. |
+| `test-dashboard-auth.js` | 11 | Optional dashboard password: off with no env var, 401 + `WWW-Authenticate` without one, accepted with the right user/password, wrong user/password/garbage rejected, `/ping` `/health` `/mirror/status` left open for health checks, tricky passwords (`:`, unicode) still work; a `DASHBOARD_PATH` hides the root with a 404, rewrites the prefixed URL, keeps health at the root, and normalises slashes; every internal URL on a page is rewritten to the secret path (this is why the chat box used to post to `/command` and 404), and `/logs.json` serves the log tail. |
 | `test-doctor.js` | 10 | The pre-flight check: a real checkout passes, a ZIP with an extra folder is explained with the `mv` that fixes it, missing `node_modules` names the command, broken `settings.json` and an empty target fail, Node 18 fails / 25 warns, `SERVER_PORT` becomes the reported port, Vercel without `BOT_BACKEND_URL` is a hard failure, and a half-written `node_modules` is caught when mineflayer is required instead of at login. |
 | `test-liveness.js` | 6 | What counts as "the server is still talking": parsed packets alone keep a session alive (the panel-host 90s loop), raw bytes and chat still count, genuine silence still reconnects, detach removes every listener, and a bot with no `_client` never throws. |
 | `test-single-host.js` | 19 | The one-host promise, enforced: `render.yaml` has exactly **one** service, stays on `plan: free`, runs one instance of `node index.js`, keeps `BOT_BACKEND_URL` empty, caps the V8 heap under 512 MB, self-pings faster than Render's 15-min spin-down and health-checks `/health`; `Procfile`/`nixpacks`/`Dockerfile` agree on the port and the endpoint; `docker-compose.yml` and the systemd unit restart forever; the Termux script takes a wake-lock; `SERVER_PORT` is read so a panel host's assigned port is bound; `deploy/free-hosts.md` covers every free option and warns about multi-accounting; the serverless entry never claims to start a bot. |

@@ -313,7 +313,8 @@ function runChecks(options = {}) {
     ok(
       "CPU profile",
       `lite — view distance ${perf["view-distance"] || "tiny"}, physics ${perf.physics === false ? "off" : "on"}, ` +
-        "actions every 60-150s, movement/position/combat/beds skipped",
+        "actions every 60-150s, movement/position/combat/beds skipped, " +
+        (perf["looks-human"] === false ? "plain twitches" : "human bursts + reactions"),
     );
   } else {
     ok("CPU profile", "normal — full modules (movement, combat, beds)");
