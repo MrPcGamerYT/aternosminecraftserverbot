@@ -12,7 +12,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 npm install
 npm run doctor     # pre-flight: node version, files, deps, target, port
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 184 tests, no framework, no network
+npm run test:all   # 191 tests, no framework, no network
 ```
 
 ---
@@ -316,6 +316,55 @@ the same express app); in proxy mode they are forwarded to the always-on bot so
 the dashboard you look at is the real, live session.
 
 ---
+
+## No Variables tab on your host?
+
+SillyDev's panel does not always expose environment variables, and losing the
+Pterodactyl startup tab is easy. Two file-based ways to configure everything,
+no panel features required.
+
+### Option A — a `.env` file (works on every host)
+
+Create `.env` in the project root (next to `index.js`) with the file manager:
+
+```
+DASHBOARD_PATH=my-bot-7f3a
+TZ=Asia/Kolkata
+NODE_OPTIONS=--max-old-space-size=192
+MC_SERVER_HOST=ZLAG.aternos.me
+MC_SERVER_PORT=39033
+```
+
+Then restart. Log:
+
+```
+[Config] .env: 3 variable(s) — DASHBOARD_PATH, TZ, NODE_OPTIONS
+[Config] Time zone: Asia/Kolkata
+[Config] Dashboard: secret link /my-bot-7f3a
+```
+
+A real panel variable always beats the file (`test-envfile.js` pins that), so a
+forgotten `.env` cannot override what the host set.
+
+### Option B — `settings.json`
+
+```json
+{
+  "timezone": "Asia/Kolkata",
+  "dashboard": { "path": "my-bot-7f3a", "password": "", "user": "admin" }
+}
+```
+
+`dashboard.path` gives you the secret link, `dashboard.password` turns on basic
+auth, `timezone` fixes quiet hours and log timestamps. Precedence:
+environment > `.env` > `settings.json`.
+
+`npm run doctor` tells you which of the three it found:
+
+```
+[ ok ] Variables file: .env with 3 line(s) — used when the panel has no Variables tab
+[warn] Dashboard access: open — anyone with the URL can stop the bot; set DASHBOARD_PATH=<secret>
+```
 
 ## If you do not want a password
 
@@ -701,7 +750,7 @@ online is normal.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 14 suites (184 tests)
+npm run test:all          # syntax + all 15 suites (191 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -715,6 +764,7 @@ npm run test:all          # syntax + all 14 suites (184 tests)
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
 | `test-chat.js` | 11 |
 | `test-human.js` | 9 | Behaviour that does not look like a cron: anti-AFK gaps are 20–90 s and actually vary, actions are weighted (look/swing dominate), quiet hours handle windows that wrap midnight, breaks are 10–40 min, a source scan fails the build if the old 45 s/60 s fixed timers come back, and every `guard()` in `initializeModules` must name a function that exists — the check that would have caught the release where five modules were armed but undefined. | Chat that reads like a person: every gap is 60–140% of `repeat-delay` with a 5 s floor, the same line never repeats back to back even with a degenerate random source, one-line and empty lists behave, 420 s averages 6–8 minutes; and the console box sends chat, refuses shell commands (`npm install` gets an explanation instead of "not connected") reports stopped vs not-connected correctly; and `/chat off` (or the dashboard button) is a hard stop that clears the timer, not a shorter delay. |
+| `test-envfile.js` | 7 | `.env` parsing (comments, `export`, quotes, junk lines, CRLF), a real panel variable always beats the file, missing/unreadable files are not errors, and the dashboard can be configured from `settings.json` when the host has no Variables tab. |
 | `test-dashboard-auth.js` | 9 | Optional dashboard password: off with no env var, 401 + `WWW-Authenticate` without one, accepted with the right user/password, wrong user/password/garbage rejected, `/ping` `/health` `/mirror/status` left open for health checks, tricky passwords (`:`, unicode) still work; a `DASHBOARD_PATH` hides the root with a 404, rewrites the prefixed URL, keeps health at the root, and normalises slashes. |
 | `test-doctor.js` | 10 | The pre-flight check: a real checkout passes, a ZIP with an extra folder is explained with the `mv` that fixes it, missing `node_modules` names the command, broken `settings.json` and an empty target fail, Node 18 fails / 25 warns, `SERVER_PORT` becomes the reported port, Vercel without `BOT_BACKEND_URL` is a hard failure, and a half-written `node_modules` is caught when mineflayer is required instead of at login. |
 | `test-liveness.js` | 6 | What counts as "the server is still talking": parsed packets alone keep a session alive (the panel-host 90s loop), raw bytes and chat still count, genuine silence still reconnects, detach removes every listener, and a bot with no `_client` never throws. |

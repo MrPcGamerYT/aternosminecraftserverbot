@@ -30,6 +30,7 @@ const probeModule = require("./probe");
 const watcherModule = require("./watcher");
 const providerModule = require("./provider");
 const setupLeaveRejoin = require("./leaveRejoin");
+const { loadEnvFile } = require("./envfile");
 
 let VERSION = "2.11.0";
 try {
@@ -52,6 +53,11 @@ const IS_MAIN = (() => {
 
 const DEFAULT_CONFIG = {
   name: "FKtheserverhost",
+  // Where the dashboard lives and who may use it. The env vars of the same
+  // name win; this block exists for hosts with no Variables tab.
+  dashboard: { path: "", password: "", user: "admin" },
+  // Local time for quiet hours and log timestamps (set before any Date is used).
+  timezone: "",
   "bot-account": { username: "OfflinePlayer", password: "", type: "offline" },
   server: { ip: "", port: 25565, version: false, "try-creative": false },
   position: { enabled: false, x: 0, y: 100, z: 0 },
@@ -142,6 +148,11 @@ function loadConfig(file = path.join(__dirname, "settings.json")) {
 }
 
 const config = loadConfig();
+
+// A host with no TZ variable still gets human hours out of settings.json.
+if (config.timezone && !process.env.TZ) {
+  process.env.TZ = String(config.timezone).trim();
+}
 
 function configNumber(section, key, fallback) {
   const source = section ? config[section] : config;
@@ -908,6 +919,8 @@ const timers = {
 const providerCache = { at: 0, result: null, inFlight: null };
 const probeCache = { at: 0, result: null, inFlight: null };
 
+// A `.env` next to index.js is the variables tab for hosts that do not have one.
+const envFileInfo = loadEnvFile(path.join(__dirname, ".env"), process.env);
 const env = process.env;
 const serverTarget = resolveServerTarget(config, env);
 const username = resolveUsername(config, env);
@@ -3119,8 +3132,29 @@ function secretsMatch(given, expected) {
  * remember beyond the link you bookmark; a scanner walking the port sees
  * nothing at all. Health endpoints stay at the root so panels keep working.
  */
+/**
+ * Where the dashboard guard comes from, in order of authority:
+ *   real environment / .env  >  settings.json -> "dashboard"
+ *
+ * A panel without a Variables tab is common enough that the file has to be able
+ * to do the whole job.
+ */
+function resolveDashboard(env = process.env) {
+  const cfg = (config && config.dashboard) || {};
+  const pick = (fromEnv, fromConfig) => {
+    const envValue = String(fromEnv == null ? "" : fromEnv).trim();
+    if (envValue) return envValue;
+    return String(fromConfig == null ? "" : fromConfig).trim();
+  };
+  return {
+    password: pick(env.DASHBOARD_PASSWORD, cfg.password),
+    user: pick(env.DASHBOARD_USER, cfg.user) || "admin",
+    path: pick(env.DASHBOARD_PATH, cfg.path),
+  };
+}
+
 function dashboardPathGuard(env) {
-  const raw = String((env && env.DASHBOARD_PATH) || "").trim();
+  const raw = resolveDashboard(env).path;
   if (!raw) return null;
   const prefix = "/" + raw.replace(/^\/+/, "").replace(/\/+$/, "");
   if (prefix === "/") return null;
@@ -3141,9 +3175,10 @@ function dashboardPathGuard(env) {
 }
 
 function dashboardAuth(env) {
-  const password = String(env.DASHBOARD_PASSWORD || "").trim();
+  const resolved = resolveDashboard(env);
+  const password = resolved.password;
   if (!password) return null;
-  const user = String(env.DASHBOARD_USER || "admin").trim();
+  const user = resolved.user;
 
   return (req, res, next) => {
     if (DASHBOARD_PUBLIC_PATHS.has(req.path)) return next();
@@ -3590,13 +3625,14 @@ function startHttpServer(port = resolveHttpPort(env)) {
   httpServer = app.listen(port, "0.0.0.0", () => {
     const actual = httpServer.address();
     const shown = actual && typeof actual === "object" ? actual.port : port;
-    const secretPath = String(env.DASHBOARD_PATH || "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+    const resolved = resolveDashboard(env);
+    const secretPath = resolved.path.replace(/^\/+/, "").replace(/\/+$/, "");
     addLog(
       secretPath
         ? `[Server] Dashboard listening on http://0.0.0.0:${shown}/${secretPath}`
         : `[Server] Dashboard listening on http://0.0.0.0:${shown}`,
     );
-    if (String(env.DASHBOARD_PASSWORD || "").trim()) {
+    if (resolved.password) {
       addLog("[Server] Dashboard password required (HTTP basic auth)");
     } else if (secretPath) {
       addLog(`[Server] Dashboard uses a secret link (/${secretPath}) — bookmarks only, the root answers 404`);
@@ -3676,6 +3712,14 @@ function printBanner() {
   }
   if (proxyInfo.proxy) addLog(`[Config] Proxy mode -> ${proxyInfo.backend}`);
   if (!provider.configured) addLog(`[Config] Provider API: not configured (reporting mode)`);
+  if (envFileInfo && envFileInfo.loaded > 0) {
+    addLog(`[Config] .env: ${envFileInfo.loaded} variable(s) — ${envFileInfo.keys.join(", ")}`);
+  }
+  if (process.env.TZ) addLog(`[Config] Time zone: ${process.env.TZ}`);
+  const dash = resolveDashboard(env);
+  if (dash.password) addLog("[Config] Dashboard: password required");
+  else if (dash.path) addLog(`[Config] Dashboard: secret link /${dash.path.replace(/^\/+/, "")}`);
+  else addLog("[Config] Dashboard: open (no password, no secret link)");
   addLog("=".repeat(58));
 }
 
@@ -4004,6 +4048,8 @@ const exported = {
   socketStateOf,
   dashboardAuth,
   dashboardPathGuard,
+  resolveDashboard,
+  loadEnvFile,
   provider,
   addLog,
   getLogs,

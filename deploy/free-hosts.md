@@ -701,6 +701,20 @@ Everything in this list is a field in their panel, in the order the panel asks.
 | `MAIN_FILE` | `index.js` — **not** `doctor.js`, or the panel runs the pre-flight check forever |
 | Startup command | leave theirs (`npm start`) — it runs `npm install` first |
 
+### Variables — or a `.env` file if the panel has no Variables tab
+
+SillyDev does not always show one. Same variables, in a file called `.env` in the
+container root:
+
+```
+DASHBOARD_PATH=my-bot-7f3a
+TZ=Asia/Kolkata
+```
+
+Nothing else changes; the app reads it at boot and logs `[Config] .env: 2
+variable(s)`. `settings.json` can carry `"dashboard": { "path": ... }` and
+`"timezone": ...` too, for hosts where file names are awkward.
+
 ### Variables tab
 
 | Name | Value | Why |

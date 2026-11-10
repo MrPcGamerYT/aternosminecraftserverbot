@@ -1,5 +1,11 @@
 {
   "name": "FKtheserverhost",
+  "dashboard": {
+    "path": "",
+    "password": "",
+    "user": "admin"
+  },
+  "timezone": "Asia/Kolkata",
   "bot-account": {
     "username": "OfflinePlayer",
     "password": "",
