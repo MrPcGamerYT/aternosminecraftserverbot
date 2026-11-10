@@ -12,7 +12,7 @@ like a normal client. See [Rules this bot follows](#rules-this-bot-follows).
 npm install
 npm run doctor     # pre-flight: node version, files, deps, target, port
 npm start          # dashboard on http://localhost:5000
-npm run test:all   # 181 tests, no framework, no network
+npm run test:all   # 184 tests, no framework, no network
 ```
 
 ---
@@ -317,6 +317,31 @@ the dashboard you look at is the real, live session.
 
 ---
 
+## If you do not want a password
+
+A panel port is on the open internet, so an unguarded dashboard lets anyone who
+scans it press **Stop** or chat as the bot. You do not have to type a password to
+fix that — use a link only you know:
+
+```
+DASHBOARD_PATH=my-bot-7f3a      # any long, random string
+```
+
+* open `http://host:port/my-bot-7f3a` — same dashboard, no login prompt
+* `http://host:port/` answers a bare `404 Not found`, so nothing advertises itself
+* `/health`, `/ping`, `/mirror/status` stay at the root, so panels and keep-alives
+  keep working
+* bookmark it once; that is the whole setup
+
+Log on boot:
+
+```
+[Server] Dashboard listening on http://0.0.0.0:6005/my-bot-7f3a
+[Server] Dashboard uses a secret link (/my-bot-7f3a) — bookmarks only, the root answers 404
+```
+
+`npm run doctor` warns when the dashboard is open and neither guard is set.
+
 ## Looking like a player, not a cron job
 
 Servers notice regularity faster than they notice anything else. A ternos is
@@ -490,6 +515,7 @@ so a partial `settings.json` still boots.
 | `PORT` | `5000` | HTTP port (binds `0.0.0.0`). Panel hosts that assign one, like Botkeep, pass it as `SERVER_PORT` and that is read automatically. |
 | `MC_SERVER_HOST` / `MC_SERVER_PORT` | settings | Server target (`host:port` also accepted). |
 | `MC_USERNAME` / `MC_PASSWORD` | settings | Account credentials. |
+| `DASHBOARD_PATH` | (none) | Serve the dashboard under a secret path instead of the root: `DASHBOARD_PATH=my-bot-7f3a` → `http://host:port/my-bot-7f3a`. No login prompt, nothing to type twice; the root answers plain `404` and scanners see nothing. `/ping`, `/health`, `/mirror/status` stay at the root. |
 | `DASHBOARD_PASSWORD` | (none) | HTTP basic auth for the dashboard. Set it whenever the port is public — a panel host publishes it. `/ping`, `/health` and `/mirror/status` stay open so health checks work. Surrounding whitespace is trimmed. |
 | `DASHBOARD_USER` | `admin` | User name for that password. |
 | `PUBLIC_URL` | auto | Keep-alive target. |
@@ -675,7 +701,7 @@ online is normal.
 
 ```
 npm test                  # syntax check of every module
-npm run test:all          # syntax + all 14 suites (181 tests)
+npm run test:all          # syntax + all 14 suites (184 tests)
 ```
 
 | Suite | Tests | Covers |
@@ -689,7 +715,7 @@ npm run test:all          # syntax + all 14 suites (181 tests)
 | `test-keepalive.js` | 18 | URL detection order, interval override, repeat + stop, proxy/serverless skip, failure logging, `/ping` round-trip. |
 | `test-chat.js` | 11 |
 | `test-human.js` | 9 | Behaviour that does not look like a cron: anti-AFK gaps are 20–90 s and actually vary, actions are weighted (look/swing dominate), quiet hours handle windows that wrap midnight, breaks are 10–40 min, a source scan fails the build if the old 45 s/60 s fixed timers come back, and every `guard()` in `initializeModules` must name a function that exists — the check that would have caught the release where five modules were armed but undefined. | Chat that reads like a person: every gap is 60–140% of `repeat-delay` with a 5 s floor, the same line never repeats back to back even with a degenerate random source, one-line and empty lists behave, 420 s averages 6–8 minutes; and the console box sends chat, refuses shell commands (`npm install` gets an explanation instead of "not connected") reports stopped vs not-connected correctly; and `/chat off` (or the dashboard button) is a hard stop that clears the timer, not a shorter delay. |
-| `test-dashboard-auth.js` | 6 | Optional dashboard password: off with no env var, 401 + `WWW-Authenticate` without one, accepted with the right user/password, wrong user/password/garbage rejected, `/ping` `/health` `/mirror/status` left open for health checks, and tricky passwords (`:`, unicode) still work. |
+| `test-dashboard-auth.js` | 9 | Optional dashboard password: off with no env var, 401 + `WWW-Authenticate` without one, accepted with the right user/password, wrong user/password/garbage rejected, `/ping` `/health` `/mirror/status` left open for health checks, tricky passwords (`:`, unicode) still work; a `DASHBOARD_PATH` hides the root with a 404, rewrites the prefixed URL, keeps health at the root, and normalises slashes. |
 | `test-doctor.js` | 10 | The pre-flight check: a real checkout passes, a ZIP with an extra folder is explained with the `mv` that fixes it, missing `node_modules` names the command, broken `settings.json` and an empty target fail, Node 18 fails / 25 warns, `SERVER_PORT` becomes the reported port, Vercel without `BOT_BACKEND_URL` is a hard failure, and a half-written `node_modules` is caught when mineflayer is required instead of at login. |
 | `test-liveness.js` | 6 | What counts as "the server is still talking": parsed packets alone keep a session alive (the panel-host 90s loop), raw bytes and chat still count, genuine silence still reconnects, detach removes every listener, and a bot with no `_client` never throws. |
 | `test-single-host.js` | 19 | The one-host promise, enforced: `render.yaml` has exactly **one** service, stays on `plan: free`, runs one instance of `node index.js`, keeps `BOT_BACKEND_URL` empty, caps the V8 heap under 512 MB, self-pings faster than Render's 15-min spin-down and health-checks `/health`; `Procfile`/`nixpacks`/`Dockerfile` agree on the port and the endpoint; `docker-compose.yml` and the systemd unit restart forever; the Termux script takes a wake-lock; `SERVER_PORT` is read so a panel host's assigned port is bound; `deploy/free-hosts.md` covers every free option and warns about multi-accounting; the serverless entry never claims to start a bot. |

@@ -1434,7 +1434,10 @@ async function runCycle(forceLogin = false) {
       `[Probe] Not ready (${describeProbe(probe)}) — probe ${runtime.notReadyProbes}/${forceAfter} before forcing a login`,
     );
     setPhase("probing", `Waiting for server — probe ${runtime.notReadyProbes}/${forceAfter}`);
-    scheduleReconnect("probe-not-ready", { probeFirst: true });
+    // Aternos opens the port minutes before the world answers. Exponential
+    // backoff here means 2s, 5s, 8s... then a burst of forced logins that get
+    // reset. A steady 15-25s beat waits for the server instead of hammering it.
+    scheduleReconnect("probe-not-ready", { probeFirst: true, delayMs: pickRandomInt(15000, 25000) });
     return;
   }
 
@@ -1832,7 +1835,14 @@ function handleEnd(reason) {
   }
 
   setPhase("disconnected", text ? `Disconnected: ${text.slice(0, 120)}` : "Disconnected");
-  scheduleReconnect(text ? `disconnected: ${text.slice(0, 60)}` : "disconnected");
+  // Never spawned means the server was not ready yet (Aternos answers the TCP
+  // port, then resets the login while the world loads). Retry on a human beat
+  // rather than the long exponential tail.
+  const neverSpawned = !runtime.connectedAt;
+  scheduleReconnect(
+    text ? `disconnected: ${text.slice(0, 60)}` : "disconnected",
+    neverSpawned ? { delayMs: pickRandomInt(20000, 35000) } : {},
+  );
 }
 
 /** Gentle activity so the server sees a live player. Never fake input. */
@@ -3101,6 +3111,35 @@ function secretsMatch(given, expected) {
  * logs, or run `/command` inside the Minecraft session. Off by default: with no
  * `DASHBOARD_PASSWORD` the dashboard behaves exactly as before.
  */
+/**
+ * Optional secret dashboard link, for people who do not want a login prompt.
+ *
+ * With `DASHBOARD_PATH=my-bot` every dashboard route is served under
+ * `/my-bot/...` and the root answers 404. No password to type, nothing to
+ * remember beyond the link you bookmark; a scanner walking the port sees
+ * nothing at all. Health endpoints stay at the root so panels keep working.
+ */
+function dashboardPathGuard(env) {
+  const raw = String((env && env.DASHBOARD_PATH) || "").trim();
+  if (!raw) return null;
+  const prefix = "/" + raw.replace(/^\/+/, "").replace(/\/+$/, "");
+  if (prefix === "/") return null;
+
+  return (req, res, next) => {
+    if (DASHBOARD_PUBLIC_PATHS.has(req.path)) return next();
+    const url = req.url || "/";
+    if (url === prefix || url === prefix + "/") {
+      req.url = "/";
+      return next();
+    }
+    if (url.startsWith(prefix + "/") || url.startsWith(prefix + "?")) {
+      req.url = url.slice(prefix.length) || "/";
+      return next();
+    }
+    res.status(404).type("text/plain").send("Not found");
+  };
+}
+
 function dashboardAuth(env) {
   const password = String(env.DASHBOARD_PASSWORD || "").trim();
   if (!password) return null;
@@ -3141,6 +3180,10 @@ function createApp(options = {}) {
   const app = express();
   app.disable("x-powered-by");
   runtime.backendError = null;
+
+  // ---- optional secret path (before auth, so the link works either way) --
+  const pathGuard = dashboardPathGuard(env);
+  if (pathGuard) app.use(pathGuard);
 
   // ---- optional dashboard password ------------------------------------
   const auth = dashboardAuth(env);
@@ -3547,11 +3590,20 @@ function startHttpServer(port = resolveHttpPort(env)) {
   httpServer = app.listen(port, "0.0.0.0", () => {
     const actual = httpServer.address();
     const shown = actual && typeof actual === "object" ? actual.port : port;
-    addLog(`[Server] Dashboard listening on http://0.0.0.0:${shown}`);
+    const secretPath = String(env.DASHBOARD_PATH || "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+    addLog(
+      secretPath
+        ? `[Server] Dashboard listening on http://0.0.0.0:${shown}/${secretPath}`
+        : `[Server] Dashboard listening on http://0.0.0.0:${shown}`,
+    );
     if (String(env.DASHBOARD_PASSWORD || "").trim()) {
       addLog("[Server] Dashboard password required (HTTP basic auth)");
+    } else if (secretPath) {
+      addLog(`[Server] Dashboard uses a secret link (/${secretPath}) — bookmarks only, the root answers 404`);
     } else if (!proxyInfo.proxy && !serverlessInfo.serverless) {
-      addLog("[Server] Dashboard is NOT password protected — set DASHBOARD_PASSWORD if the port is public");
+      addLog(
+        "[Server] Dashboard is OPEN — anyone with the URL can stop the bot; set DASHBOARD_PATH=<secret> for a private link, or DASHBOARD_PASSWORD",
+      );
     }
     const publicUrl = watcherModule.resolvePublicUrl(env);
     if (publicUrl) addLog(`[Server] Public URL: ${publicUrl}`);
@@ -3951,6 +4003,7 @@ const exported = {
   attachLivenessSources,
   socketStateOf,
   dashboardAuth,
+  dashboardPathGuard,
   provider,
   addLog,
   getLogs,

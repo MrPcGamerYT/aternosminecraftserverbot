@@ -218,6 +218,24 @@ function runChecks(options = {}) {
     ? ` — note: SERVER_PORT is ${panel}, the panel expects that one`
     : ""));
 
+  // ---- 5a. Who can reach the dashboard --------------------------------
+  // The port a panel gives you is on the open internet. Without a guard,
+  // anyone scanning it can press Stop or chat as the bot.
+  const dashPassword = String(env.DASHBOARD_PASSWORD || "").trim();
+  const dashPath = String(env.DASHBOARD_PATH || "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  if (dashPassword) {
+    ok("Dashboard access", "password required (HTTP basic auth)");
+  } else if (dashPath) {
+    ok("Dashboard access", `secret link /${dashPath} — no login prompt, root answers 404`);
+  } else if (env.VERCEL || env.BOT_BACKEND_URL) {
+    ok("Dashboard access", "no local port exposed (serverless/proxy)");
+  } else {
+    warn(
+      "Dashboard access",
+      "open — anyone with the URL can stop the bot; set DASHBOARD_PATH=<secret> for a private link (no password prompt)",
+    );
+  }
+
   // ---- 5b. What the panel will actually run ----------------------------
   // SillyDev/Pterodactyl start whatever MAIN_FILE says. Setting it to
   // doctor.js (a common trick to see this output) leaves the bot "not

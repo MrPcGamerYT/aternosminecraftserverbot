@@ -3,7 +3,7 @@
 // ============================================================
 // tests/test-dashboard-auth.js — optional password on the dashboard
 //
-//   npm run test:dashboard-auth   (6 tests)
+//   npm run test:dashboard-auth   (9 tests)
 //
 // A panel host publishes the assigned port on the plain internet,
 // so the dashboard is one URL away from anyone: Stop, logs, and
@@ -14,7 +14,7 @@
 
 const { test, run, assert } = require("./harness");
 
-const { dashboardAuth } = require("../index.js");
+const { dashboardAuth, dashboardPathGuard } = require("../index.js");
 
 /** Minimal express req/res doubles. */
 function fakeReq(path, authorization) {
@@ -115,6 +115,48 @@ test("6. tricky passwords work, and surrounding whitespace is trimmed", () => {
   const mw = dashboardAuth({ DASHBOARD_PASSWORD: "  spaced  " });
   assert.equal(call(mw, fakeReq("/", basic("admin", "spaced"))).passed, true);
   assert.equal(call(mw, fakeReq("/", basic("admin", "  spaced  "))).passed, false);
+});
+
+test("7. a secret path hides the dashboard and rewrites the real route", () => {
+  const guard = dashboardPathGuard({ DASHBOARD_PATH: "my-bot-7f3a" });
+  assert.ok(guard, "a path was configured, so a guard must exist");
+
+  const root = call(guard, { path: "/", url: "/" });
+  assert.equal(root.passed, false, "the root must not serve the dashboard");
+  assert.equal(root.res.statusCode, 404);
+  assert.equal(root.res.body, "Not found", "no hint about what lives here");
+
+  const wrong = call(guard, { path: "/admin", url: "/admin" });
+  assert.equal(wrong.res.statusCode, 404);
+
+  const right = { path: "/my-bot-7f3a/status", url: "/my-bot-7f3a/status?light=1" };
+  const okCall = call(guard, right);
+  assert.equal(okCall.passed, true);
+  assert.equal(right.url, "/status?light=1", "the prefix is stripped, the query survives");
+
+  const bare = { path: "/my-bot-7f3a", url: "/my-bot-7f3a" };
+  call(guard, bare);
+  assert.equal(bare.url, "/", "the bare link is the dashboard");
+});
+
+test("8. health endpoints stay at the root so panels keep working", () => {
+  const guard = dashboardPathGuard({ DASHBOARD_PATH: "secret4" });
+  for (const path of ["/health", "/ping", "/mirror/status"]) {
+    const result = call(guard, { path, url: path });
+    assert.equal(result.passed, true, `${path} must not be hidden`);
+  }
+});
+
+test("9. no path configured means no guard, and slashes are normalised", () => {
+  assert.equal(dashboardPathGuard({}), null);
+  assert.equal(dashboardPathGuard({ DASHBOARD_PATH: "   " }), null);
+  assert.equal(dashboardPathGuard({ DASHBOARD_PATH: "/" }), null, "a bare slash is not a secret");
+
+  const guard = dashboardPathGuard({ DASHBOARD_PATH: "/deep/link/" });
+  const right = { path: "/deep/link", url: "/deep/link" };
+  assert.equal(call(guard, right).passed, true);
+  assert.equal(right.url, "/");
+  assert.equal(call(guard, { path: "/deep", url: "/deep" }).res.statusCode, 404);
 });
 
 run("dashboard auth");
