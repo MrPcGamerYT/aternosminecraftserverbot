@@ -967,6 +967,33 @@ Two things narrow it down for free:
 If the same kick keeps coming back, the honest next step is to run the bot on a
 server *you* control (Paper on a VM) where you can read `latest.log` as it happens.
 
+## 17. "High CPU" — make the client boring
+
+Aternos does not suspend a server for being full; it stops it for being expensive.
+A mineflayer client is the expensive half:
+
+| Cost | Why it matters on Aternos | Fix |
+| --- | --- | --- |
+| pathfinding to a target position | runs every tick and fails loudly | `"position": { "enabled": false }` |
+| circle-walk, random jumps | constant entity updates + chunk loads around a moving player | lite mode skips `movement` |
+| default view distance | the server sends ~200 chunks instead of ~25 | `view-distance: "tiny"` |
+| client physics | the bot simulates gravity for a player that never moves | `physics: false` |
+| entity/combat scans | walking the entity list every second | lite mode skips `combat` |
+
+```json
+"performance": { "enabled": true, "physics": false, "view-distance": "tiny", "quiet-actions": true }
+```
+
+Boot line to look for:
+
+```
+[Perf] Lite mode: view distance tiny, physics off, actions every 60-150s
+[Perf] Skipping movement, position, combat, beds to keep CPU low
+```
+
+A stationary bot with a tiny view distance is close to the cheapest client a
+server can hold — and that is exactly what an "AFK" session should cost.
+
 ## What not to do on the next host
 
 * **Do not deploy this on another PaaS free tier with the self-ping on.** Render,

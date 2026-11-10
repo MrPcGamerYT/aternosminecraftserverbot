@@ -305,6 +305,20 @@ function runChecks(options = {}) {
     ok("Human mode", "on — jittered anti-AFK, random chat; quiet hours off (24/7)");
   }
 
+  // ---- 5d. CPU profile --------------------------------------------------
+  // Aternos stops a whole server for high CPU, and a client that paths around,
+  // jumps and loads chunks is the expensive part. Say which profile is live.
+  const perf = (config && config.performance) || {};
+  if (perf.enabled === true) {
+    ok(
+      "CPU profile",
+      `lite — view distance ${perf["view-distance"] || "tiny"}, physics ${perf.physics === false ? "off" : "on"}, ` +
+        "actions every 60-150s, movement/position/combat/beds skipped",
+    );
+  } else {
+    ok("CPU profile", "normal — full modules (movement, combat, beds)");
+  }
+
   // ---- 6. Host hints ---------------------------------------------------
   const hints = [];
   if (env.SERVER_PORT) hints.push("panel host (SERVER_PORT)");

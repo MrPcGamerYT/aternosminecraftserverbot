@@ -114,6 +114,12 @@ const DEFAULT_CONFIG = {
       "tick-interval": 5000,
     },
   },
+  performance: {
+    enabled: false,
+    physics: true,
+    "view-distance": "tiny",
+    "quiet-actions": true,
+  },
   movement: {
     enabled: true,
     "circle-walk": { enabled: false, radius: 4, speed: 3000 },
@@ -1688,6 +1694,29 @@ function wireBotEvents(bot) {
       sendDiscordWebhook(`✅ **Connected** to \`${serverTarget.label}\``, 0x3fb950);
     }
 
+    // ---- PERFORMANCE PROFILE --------------------------------------------
+    // Standing still is free; simulating gravity, pathing and loading chunks is
+    // not. On Aternos a chatty client is enough to get the whole server stopped
+    // for high CPU, so lite mode turns the expensive parts off first.
+    try {
+      const perf = performanceConfig();
+      if (perf.enabled) {
+        if (typeof bot.setSettings === "function") {
+          bot.setSettings({ viewDistance: perf.viewDistance });
+        } else if (bot.settings) {
+          bot.settings.viewDistance = perf.viewDistance;
+        }
+        if (!perf.physics && "physicsEnabled" in bot) bot.physicsEnabled = false;
+        addLog(
+          `[Perf] Lite mode: view distance ${perf.viewDistance}` +
+            (perf.physics ? "" : ", physics off") +
+            (perf.quietActions ? ", actions every 60-150s" : ""),
+        );
+      }
+    } catch (err) {
+      addLog(`[Perf] Profile could not be applied: ${err.message}`);
+    }
+
     // ---- MODULE INIT ---------------------------------------------------
     // Everything below runs inside a try/catch. A bad settings value or
     // a module API mismatch must degrade the bot, not kill the session.
@@ -1928,14 +1957,17 @@ function initializeModules(bot, mcData) {
   addLog("[Modules] Initializing modules…");
   const movements = buildMovements(bot, mcData);
 
+  const skipped = new Set(disabledModulesFor());
+  if (skipped.size > 0) addLog(`[Perf] Skipping ${[...skipped].join(", ")} to keep CPU low`);
+
   guard("auto-auth", () => setupAutoAuth(bot));
   guard("chat-messages", () => setupChatMessages(bot));
   guard("anti-afk", () => setupAntiAfk(bot));
-  guard("movement", () => setupMovement(bot, movements));
-  guard("position", () => setupPosition(bot, movements));
+  if (!skipped.has("movement")) guard("movement", () => setupMovement(bot, movements));
+  if (!skipped.has("position")) guard("position", () => setupPosition(bot, movements));
   guard("leave-rejoin", () => setupLeaveRejoinModule(bot));
-  guard("combat", () => setupCombat(bot, mcData));
-  guard("beds", () => setupBeds(bot));
+  if (!skipped.has("combat")) guard("combat", () => setupCombat(bot, mcData));
+  if (!skipped.has("beds")) guard("beds", () => setupBeds(bot));
   guard("chat", () => setupChatResponder(bot));
 
   addLog(`[Modules] Ready (${botIntervals.size} interval(s) armed)`);
@@ -1987,6 +2019,35 @@ function setupAutoAuth(bot) {
   });
 
   setTimeout(() => tryAuth("login"), 10000).unref?.();
+}
+
+/** The `performance` block, with the defaults that keep a session cheap. */
+function performanceConfig() {
+  const perf = (config && config.performance) || {};
+  const distance = String(perf["view-distance"] || "tiny").trim().toLowerCase();
+  return {
+    enabled: perf.enabled === true,
+    physics: perf.physics === false ? false : true,
+    // mineflayer speaks these names; anything unknown falls back to tiny.
+    viewDistance: ["tiny", "short", "normal", "far"].includes(distance) ? distance : "tiny",
+    quietActions: perf["quiet-actions"] !== false,
+  };
+}
+
+/** Modules that are pure CPU on a server we only want to stay in. */
+function disabledModulesFor(perf = performanceConfig()) {
+  if (!perf.enabled) return [];
+  return ["movement", "position", "combat", "beds"];
+}
+
+/**
+ * The gap between anti-AFK actions in lite mode: 60-150s.
+ *
+ * Still human (nobody twitches every 20 seconds for hours), and it costs the
+ * server far fewer entity updates and chunk loads than the normal beat.
+ */
+function nextLightAntiAfkDelayMs(random = Math.random) {
+  return pickRandomInt(60000, 150000, random);
 }
 
 /** Uniform integer in [min, max], inclusive, from an injectable RNG. */
@@ -2217,13 +2278,18 @@ function setupAntiAfk(bot) {
 
   // One jittered loop instead of three metronomes. Every tick decides whether
   // it is time for something, and what.
+  const perf = performanceConfig();
+  const gap = () => (perf.enabled && perf.quietActions ? nextLightAntiAfkDelayMs() : nextAntiAfkDelayMs());
   let nextAt = Date.now() + firstAntiAfkDelayMs();
   addBotInterval(() => {
     if (!runtime.connectedAt) return;
     if (Date.now() < nextAt) return;
-    nextAt = Date.now() + nextAntiAfkDelayMs();
+    nextAt = Date.now() + gap();
 
-    const action = pickAntiAfkAction();
+    let action = pickAntiAfkAction();
+    // Jumping and sneaking push entity updates to every nearby player and cost
+    // the server real work; looking and swinging do not.
+    if (perf.enabled && (action === "jump" || action === "sneak")) action = "look";
     try {
       if (action === "swing") {
         if (typeof bot.swingArm === "function") bot.swingArm();
@@ -4023,6 +4089,9 @@ const exported = {
   pickRestMs,
   humanModeConfig,
   setupHumanSchedule,
+  performanceConfig,
+  disabledModulesFor,
+  nextLightAntiAfkDelayMs,
   computeBackoff,
   computeDuplicateLoginDelay,
   shouldForceLogin,
